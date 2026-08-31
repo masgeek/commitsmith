@@ -1,0 +1,14 @@
+{
+  "name": "oco-lite",
+  "version": "1.0.0",
+  "description": "Minimal single-line/split commit message generator using a local Ollama model. Munywele Consulting LTD internal tool.",
+  "type": "module",
+  "bin": {
+    "oco-lite": "./oco-lite.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
