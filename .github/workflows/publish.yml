@@ -1,0 +1,48 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  release:
+    types: [published]
+
+# Required repo secret: NPM_TOKEN
+# Create at https://www.npmjs.com/settings/<you>/tokens as an "Automation" token,
+# then add it under Settings -> Secrets and variables -> Actions -> New repository secret.
+
+permissions:
+  contents: read
+  id-token: write   # enables npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Syntax check
+        run: node --check oco-lite.mjs
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag ($TAG_VERSION) does not match package.json version ($PKG_VERSION)."
+            echo "Run: npm version <patch|minor|major> && git push --follow-tags"
+            exit 1
+          fi
+        if: github.event_name == 'push'
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
