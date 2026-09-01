@@ -17,7 +17,17 @@
  *   node oco-lite.mjs -y                 ... and commit it (no confirmation)
  *   node oco-lite.mjs --split            one message/commit per staged FILE
  *   node oco-lite.mjs --split-hunks      one message/commit per diff HUNK (logical change)
+ *   node oco-lite.mjs --group            cluster staged files by RELATED change, one commit per group
  *   node oco-lite.mjs --help             show this help
+ *
+ * --group mode:
+ *   Looks at all staged files together and asks the model to cluster files
+ *   that belong to the same logical change (e.g. a migration + model +
+ *   seeder added for the same feature) into one commit, while keeping
+ *   genuinely unrelated files in separate commits. Different from --split
+ *   (always one commit per file) and --split-hunks (always one commit per
+ *   hunk) — --group is the only mode that can COMBINE multiple files into
+ *   a single commit based on detected relatedness.
  *
  * Breaking change detection:
  *   Every generated message is classified for breaking-change risk (removed
@@ -34,6 +44,7 @@
  *   OCOLITE_HOST       default: http://localhost:11434
  *   OCOLITE_MAX_DIFF   default: 6000   (chars of diff sent to the model per request)
  *   OCOLITE_TIMEOUT_MS default: 60000  (per-request timeout to Ollama)
+ *   OCOLITE_GROUP_MAX_DIFF_PER_FILE default: 1200 (chars of each file's diff sent in --group mode)
  */
 
 import { execSync } from 'node:child_process';
@@ -43,6 +54,7 @@ const MODEL = process.env.OCOLITE_MODEL || 'qwen2.5-coder:7b';
 const HOST = process.env.OCOLITE_HOST || 'http://localhost:11434';
 const MAX_DIFF = Number(process.env.OCOLITE_MAX_DIFF || 6000);
 const TIMEOUT_MS = Number(process.env.OCOLITE_TIMEOUT_MS || 60000);
+const GROUP_MAX_DIFF_PER_FILE = Number(process.env.OCOLITE_GROUP_MAX_DIFF_PER_FILE || 1200);
 
 const ALLOWED_TYPES = new Set([
   'feat', 'fix', 'refactor', 'chore', 'docs', 'test', 'style', 'perf', 'build', 'ci',
@@ -53,6 +65,7 @@ const shouldCommit = args.includes('--commit') || args.includes('-y');
 const autoYes = args.includes('-y');
 const splitMode = args.includes('--split');
 const splitHunksMode = args.includes('--split-hunks');
+const groupMode = args.includes('--group');
 const breakingDetectionEnabled = !args.includes('--no-breaking-detection');
 const helpRequested = args.includes('--help') || args.includes('-h');
 
@@ -65,6 +78,7 @@ Usage:
   oco-lite -y                     generate + commit, no confirmation
   oco-lite --split [--commit|-y]  one commit per staged file
   oco-lite --split-hunks [...]    one commit per logical diff hunk
+  oco-lite --group [--commit|-y]  cluster related files into one commit each
   oco-lite --no-breaking-detection  skip breaking-change classification
   oco-lite --help                 show this help
 
@@ -185,6 +199,73 @@ function buildPrompt(diff) {
     'Diff:',
     diff,
   ].join('\n');
+}
+
+function buildGroupingPrompt(fileEntries) {
+  const filesBlock = fileEntries
+    .map(({ path, diff }) => `### FILE: ${path}\n${diff}`)
+    .join('\n\n');
+
+  return [
+    'You group a set of staged file diffs into logical commits. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "groups": [',
+    '    {',
+    '      "files": ["path/one.php", "path/two.php"],',
+    '      "type": one of feat|fix|refactor|chore|docs|test|style|perf|build|ci,',
+    '      "scope": short lowercase scope, use "" if not applicable,',
+    '      "subject": imperative, under 72 chars, describing what this GROUP of files does together,',
+    '      "breaking": true or false,',
+    '      "breakingReason": short sentence if breaking is true, else ""',
+    '    }',
+    '  ]',
+    '}',
+    '',
+    'Rules:',
+    '- Every staged file below must appear in EXACTLY ONE group. Do not omit or duplicate any file.',
+    '- Put files together in the same group ONLY if they implement the same logical change (e.g. a migration + model + seeder for the same new feature, or a class and its test).',
+    '- If a file is unrelated to the others, give it its own group rather than forcing it in.',
+    '- Prefer fewer, larger groups over many tiny ones ONLY when the relationship is genuine — do not merge unrelated files just to reduce the count.',
+    '- Output ONLY the JSON object.',
+    '',
+    'Staged files:',
+    filesBlock,
+  ].join('\n');
+}
+
+function parseGroupingResult(raw, allFiles) {
+  const parsed = parseModelJson(raw);
+  if (!parsed || !Array.isArray(parsed.groups)) return null;
+
+  const seen = new Set();
+  const groups = [];
+
+  for (const g of parsed.groups) {
+    if (!Array.isArray(g.files) || g.files.length === 0) continue;
+    const validFiles = g.files.filter((f) => allFiles.includes(f) && !seen.has(f));
+    if (validFiles.length === 0) continue;
+    validFiles.forEach((f) => seen.add(f));
+
+    const formatted = formatCommitMessage(g);
+    if (!formatted) continue;
+
+    groups.push({ files: validFiles, message: formatted.message, breaking: formatted.breaking });
+  }
+
+  // Any staged file the model missed or duplicated away gets swept into a
+  // trailing catch-all group rather than silently left uncommitted.
+  const leftover = allFiles.filter((f) => !seen.has(f));
+  if (leftover.length > 0) {
+    groups.push({
+      files: leftover,
+      message: `chore: update ${leftover.length > 1 ? 'remaining files' : leftover[0]}`,
+      breaking: false,
+    });
+  }
+
+  return groups.length > 0 ? groups : null;
 }
 
 async function callOllama(prompt) {
@@ -412,6 +493,61 @@ async function runSplitHunksMode() {
   console.log('\nDone.');
 }
 
+async function runGroupMode() {
+  const files = getStagedFiles();
+  if (files.length === 0) die('No staged files found.');
+
+  if (files.length === 1) {
+    console.log('Only one staged file — nothing to group, falling back to single-file mode.');
+    return runSingleMode();
+  }
+
+  const fileEntries = files.map((path) => ({
+    path,
+    diff: truncateDiff(getStagedDiff(path), GROUP_MAX_DIFF_PER_FILE),
+  }));
+
+  console.log(`Analyzing ${files.length} staged files for related changes with ${MODEL}...`);
+
+  let raw;
+  try {
+    raw = await callOllama(buildGroupingPrompt(fileEntries));
+  } catch (err) {
+    die(err.message);
+  }
+
+  const groups = parseGroupingResult(raw, files);
+  if (!groups) {
+    console.warn('Could not parse a valid grouping from the model. Falling back to --split (one commit per file).');
+    return runSplitMode();
+  }
+
+  console.log(`\nDetected ${groups.length} logical group(s):\n`);
+  groups.forEach((g, i) => {
+    console.log(`Group ${i + 1}: ${g.files.join(', ')}`);
+    console.log('——————————————————');
+    console.log(g.message);
+    console.log('——————————————————');
+    if (g.breaking) console.log('⚠ marked as a BREAKING CHANGE');
+    console.log('');
+  });
+
+  if (!shouldCommit) return;
+
+  for (const g of groups) {
+    const proceed =
+      autoYes || (await confirm(`Commit group [${g.files.join(', ')}] with the above message? [y/N] `));
+    if (!proceed) {
+      console.log(`Skipped group [${g.files.join(', ')}]. Files remain staged.`);
+      continue;
+    }
+    execSync(`git commit -m ${JSON.stringify(g.message)} -- ${g.files.map((f) => JSON.stringify(f)).join(' ')}`, {
+      stdio: 'inherit',
+    });
+  }
+  console.log('\nDone.');
+}
+
 async function main() {
   if (helpRequested) return printHelp();
 
@@ -419,6 +555,7 @@ async function main() {
   await assertOllamaReachable();
 
   if (splitHunksMode) await runSplitHunksMode();
+  else if (groupMode) await runGroupMode();
   else if (splitMode) await runSplitMode();
   else await runSingleMode();
 }
