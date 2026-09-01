@@ -1,14 +1,40 @@
 {
-  "name": "oco-lite",
+  "name": "@masgeek/oco-lite",
   "version": "1.0.0",
-  "description": "Minimal single-line/split commit message generator using a local Ollama model. Munywele Consulting LTD internal tool.",
+  "description": "Minimal, dependency-free git commit message generator using a local Ollama model. Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
   "type": "module",
   "bin": {
     "oco-lite": "./oco-lite.mjs"
   },
+  "files": [
+    "oco-lite.mjs",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED",
-  "private": true
+  "keywords": [
+    "git",
+    "commit",
+    "commit-message",
+    "ollama",
+    "ai",
+    "cli",
+    "conventional-commits",
+    "local-llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/masgeek/oco-lite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/masgeek/oco-lite/issues"
+  },
+  "homepage": "https://github.com/masgeek/oco-lite#readme",
+  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }
