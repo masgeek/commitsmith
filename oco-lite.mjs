@@ -29,15 +29,25 @@
  *   hunk) — --group is the only mode that can COMBINE multiple files into
  *   a single commit based on detected relatedness.
  *
+ * Commit message format:
+ *   <gitmoji> <type>(<scope>): <subject>
+ *
+ *   * <change 1>
+ *   * <change 2> [BREAKING CHANGE: only present if applicable]
+ *
+ *   Gitmoji is chosen from the type (✨ feat, 🐛 fix, 📝 docs, 🎨 style,
+ *   ♻️ refactor, ⚡ perf, ✅ test, 🛠️ build, 👷 ci, 🔧 chore, 🔒 security,
+ *   ♿ accessibility, 🗑️ removal), or 💥 whenever the commit is flagged
+ *   as a breaking change (see below), overriding the type's normal emoji.
+ *
  * Breaking change detection:
  *   Every generated message is classified for breaking-change risk (removed
  *   or renamed public API, changed method signature, migration that alters
- *   an existing schema/column, changed config keys/env vars, etc.).
- *   When flagged, the commit is marked per the Conventional Commits spec:
- *     type(scope)!: subject
- *
- *     BREAKING CHANGE: <short reason>
- *   Disable with --no-breaking-detection if you find it too aggressive.
+ *   an existing schema/column, changed config keys/env vars, etc.). When
+ *   flagged, the leading gitmoji becomes 💥 and the relevant bullet is
+ *   annotated inline with "[BREAKING CHANGE: <reason>]" per the template
+ *   above. Disable with --no-breaking-detection if you find it too
+ *   aggressive.
  *
  * Config via env vars (all optional):
  *   OCOLITE_MODEL      default: qwen2.5-coder:7b
@@ -47,7 +57,7 @@
  *   OCOLITE_GROUP_MAX_DIFF_PER_FILE default: 1200 (chars of each file's diff sent in --group mode)
  */
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 
 const MODEL = process.env.OCOLITE_MODEL || 'qwen2.5-coder:7b';
@@ -57,8 +67,26 @@ const TIMEOUT_MS = Number(process.env.OCOLITE_TIMEOUT_MS || 60000);
 const GROUP_MAX_DIFF_PER_FILE = Number(process.env.OCOLITE_GROUP_MAX_DIFF_PER_FILE || 1200);
 
 const ALLOWED_TYPES = new Set([
-  'feat', 'fix', 'refactor', 'chore', 'docs', 'test', 'style', 'perf', 'build', 'ci',
+  'feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test',
+  'build', 'ci', 'chore', 'security', 'accessibility', 'removal',
 ]);
+
+const GITMOJI = {
+  feat: '✨',
+  fix: '🐛',
+  docs: '📝',
+  style: '🎨',
+  refactor: '♻️',
+  perf: '⚡',
+  test: '✅',
+  build: '🛠️',
+  ci: '👷',
+  chore: '🔧',
+  security: '🔒',
+  accessibility: '♿',
+  removal: '🗑️',
+};
+const BREAKING_GITMOJI = '💥';
 
 const args = process.argv.slice(2);
 const shouldCommit = args.includes('--commit') || args.includes('-y');
@@ -184,16 +212,19 @@ function buildPrompt(diff) {
     '',
     'JSON shape:',
     '{',
-    '  "type": one of feat|fix|refactor|chore|docs|test|style|perf|build|ci,',
+    '  "type": one of feat|fix|docs|style|refactor|perf|test|build|ci|chore|security|accessibility|removal,',
     '  "scope": short lowercase scope, e.g. a filename stem or module (use "" if not applicable),',
     '  "subject": imperative, under 72 chars, summarizing the overall intent as ONE change,',
+    '  "changes": array of 1-5 short bullet strings, each describing one concrete change made in this diff (function added, logic changed, bug fixed, etc.),',
     '  "breaking": true or false — true only if this diff removes/renames a public function, class, route, config key, env var, or changes a method signature or database schema in a way that could break existing callers or data,',
-    '  "breakingReason": if breaking is true, one short sentence explaining what breaks; otherwise ""',
+    '  "breakingChangeIndex": if breaking is true, the 0-based index into "changes" that is the breaking one (append "[BREAKING CHANGE: ...]" context there); otherwise -1,',
+    '  "breakingReason": if breaking is true, one short phrase explaining what breaks; otherwise ""',
     '}',
     '',
     'Rules:',
     '- Output ONLY the JSON object. No text before or after it.',
     '- "subject" must describe the diff as a single coherent change, even if it touches multiple methods.',
+    '- Each entry in "changes" is a short, concrete bullet point (not a restatement of "subject") — e.g. "extracted validation into validateInput()", "added null check for legacy records".',
     '- Be conservative with "breaking": true — routine refactors, added optional parameters, new files, and internal-only changes are NOT breaking.',
     '',
     'Diff:',
@@ -214,11 +245,13 @@ function buildGroupingPrompt(fileEntries) {
     '  "groups": [',
     '    {',
     '      "files": ["path/one.php", "path/two.php"],',
-    '      "type": one of feat|fix|refactor|chore|docs|test|style|perf|build|ci,',
+    '      "type": one of feat|fix|docs|style|refactor|perf|test|build|ci|chore|security|accessibility|removal,',
     '      "scope": short lowercase scope, use "" if not applicable,',
     '      "subject": imperative, under 72 chars, describing what this GROUP of files does together,',
+    '      "changes": array of 1-5 short bullet strings describing concrete changes across this group,',
     '      "breaking": true or false,',
-    '      "breakingReason": short sentence if breaking is true, else ""',
+    '      "breakingChangeIndex": 0-based index into "changes" that is breaking, else -1,',
+    '      "breakingReason": short phrase if breaking is true, else ""',
     '    }',
     '  ]',
     '}',
@@ -260,7 +293,7 @@ function parseGroupingResult(raw, allFiles) {
   if (leftover.length > 0) {
     groups.push({
       files: leftover,
-      message: `chore: update ${leftover.length > 1 ? 'remaining files' : leftover[0]}`,
+      message: `${GITMOJI.chore} chore: update ${leftover.length > 1 ? 'remaining files' : leftover[0]}`,
       breaking: false,
     });
   }
@@ -323,15 +356,37 @@ function formatCommitMessage(parsed) {
   const subject = subjectRaw.replace(/^["'`]+|["'`]+$/g, '').replace(/\.$/, '');
   const breaking = breakingDetectionEnabled && parsed.breaking === true;
   const breakingReason = typeof parsed.breakingReason === 'string' ? parsed.breakingReason.trim() : '';
+  const breakingIndex = Number.isInteger(parsed.breakingChangeIndex) ? parsed.breakingChangeIndex : -1;
+
+  const changes = Array.isArray(parsed.changes)
+    ? parsed.changes
+        .filter((c) => typeof c === 'string' && c.trim().length > 0)
+        .map((c) => c.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/\.$/, ''))
+        .slice(0, 5)
+    : [];
 
   if (!subject) return null;
 
+  const gitmoji = breaking ? BREAKING_GITMOJI : GITMOJI[type] || GITMOJI.chore;
   const scopePart = scope ? `(${scope})` : '';
-  const bangPart = breaking ? '!' : '';
-  let message = `${type}${scopePart}${bangPart}: ${subject}`;
+  let message = `${gitmoji} ${type}${scopePart}: ${subject}`;
 
-  if (breaking && breakingReason) {
-    message += `\n\nBREAKING CHANGE: ${breakingReason}`;
+  if (changes.length > 0) {
+    const bullets = changes.map((change, i) => {
+      const isBreakingBullet = breaking && i === breakingIndex;
+      const suffix = isBreakingBullet && breakingReason ? ` [BREAKING CHANGE: ${breakingReason}]` : '';
+      return `* ${change}${suffix}`;
+    });
+
+    // If the model flagged a breaking change but didn't point at a specific
+    // bullet, append a dedicated breaking-change bullet rather than losing it.
+    if (breaking && breakingReason && breakingIndex < 0) {
+      bullets.push(`* BREAKING CHANGE: ${breakingReason}`);
+    }
+
+    message += `\n\n${bullets.join('\n')}`;
+  } else if (breaking && breakingReason) {
+    message += `\n\n* BREAKING CHANGE: ${breakingReason}`;
   }
 
   return { message, breaking };
@@ -387,11 +442,9 @@ function confirm(question) {
 }
 
 function commitWithMessage(message, pathspec) {
-  const cmd = pathspec
-    ? `git commit -m ${JSON.stringify(message)} -- ${JSON.stringify(pathspec)}`
-    : `git commit -m ${JSON.stringify(message)}`;
+  const args = pathspec ? ['commit', '-m', message, '--', pathspec] : ['commit', '-m', message];
   try {
-    execSync(cmd, { stdio: 'inherit' });
+    execFileSync('git', args, { stdio: 'inherit' });
   } catch {
     die(`git commit failed${pathspec ? ` for ${pathspec}` : ''}.`);
   }
@@ -541,9 +594,7 @@ async function runGroupMode() {
       console.log(`Skipped group [${g.files.join(', ')}]. Files remain staged.`);
       continue;
     }
-    execSync(`git commit -m ${JSON.stringify(g.message)} -- ${g.files.map((f) => JSON.stringify(f)).join(' ')}`, {
-      stdio: 'inherit',
-    });
+    execFileSync('git', ['commit', '-m', g.message, '--', ...g.files], { stdio: 'inherit' });
   }
   console.log('\nDone.');
 }
