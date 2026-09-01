@@ -7,13 +7,14 @@ on:
   release:
     types: [published]
 
-# Required repo secret: NPM_TOKEN
-# Create at https://www.npmjs.com/settings/<you>/tokens as an "Automation" token,
-# then add it under Settings -> Secrets and variables -> Actions -> New repository secret.
+# Publishes via npm Trusted Publishing (OIDC) — no NPM_TOKEN secret needed.
+# One-time setup: publish the first version manually with a token, then
+# configure the Trusted Publisher on npmjs.com -> package settings ->
+# Trusted Publisher, pointing at this repo + this workflow filename.
 
 permissions:
   contents: read
-  id-token: write   # enables npm provenance
+  id-token: write   # required — this is what lets npm mint the OIDC token
 
 jobs:
   publish:
@@ -37,12 +38,12 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
             echo "Tag ($TAG_VERSION) does not match package.json version ($PKG_VERSION)."
-            echo "Run: npm version <patch|minor|major> --no-git-tag-version && git add package.json && git commit -m \"chore: release \$(node -p \"require('./package.json').version\")\" && git tag \$(node -p \"require('./package.json').version\") && git push --follow-tags"
+            echo "Run: npm version <patch|minor|major> && git push --follow-tags"
             exit 1
           fi
         if: github.event_name == 'push'
 
-      - name: Publish
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (Trusted Publishing / OIDC)
+        run: npm publish --access public
+        # No NODE_AUTH_TOKEN needed — npm CLI v11+ auto-detects the GitHub
+        # Actions OIDC context and requests a short-lived token itself.
