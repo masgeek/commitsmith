@@ -16,9 +16,12 @@ control over the output format.
 
 ## Features
 
-- Single-line, strictly-formatted [Conventional Commits](https://www.conventionalcommits.org/) messages
+- Gitmoji-prefixed [Conventional Commits](https://www.conventionalcommits.org/)-style
+  messages with a bulleted summary of concrete changes (see [Commit message
+  format](#commit-message-format))
 - Structured JSON model output (reliable to parse — no prose-scraping)
-- **Breaking change detection** — flags and marks commits per spec (`type(scope)!: subject` + `BREAKING CHANGE:` footer)
+- **Breaking change detection** — flips the leading gitmoji to 💥 and
+  annotates the relevant bullet inline
 - Four granularities:
     - one message for all staged changes
     - one commit **per staged file** (`--split`)
@@ -43,69 +46,140 @@ control over the output format.
 
 ## Installation
 
-### Option A — Global CLI (recommended)
+### Option A — Install from npm (recommended)
+
+```bash
+npm install -g @masgeek/oco-lite
+# or
+pnpm add -g @masgeek/oco-lite
+```
+
+Verify:
+
+```bash
+oco-lite --help
+```
+
+### Option B — Local clone, installed globally via pnpm
 
 ```powershell
 cd D:\Dev\js\oco-lite
 pnpm add -g file:.
 ```
 
-> `pnpm add -g .` may fail on some pnpm/Windows setups with
-> `ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_LATEST` (pnpm treats the bare `.` as
-> a registry package name instead of a local path). Use the explicit
-> `file:` protocol as shown above. If that still fails, pack and install
-> the tarball instead:
+> `pnpm add -g .` (bare dot) fails on some pnpm/Windows setups with
+> `ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_LATEST` (pnpm treats `.` as a
+> registry package name instead of a local path). Use the explicit `file:`
+> prefix as shown above. If that still fails, pack and install the
+> tarball instead:
 > ```powershell
 > pnpm pack
 > pnpm add -g ./oco-lite-1.0.0.tgz
 > ```
 
-Verify:
+This is a real install (not a live symlink) — after editing
+`oco-lite.mjs`, re-run `pnpm add -g file:.` to pick up changes.
 
-```powershell
-Get-Command oco-lite
-oco-lite --help
-```
+To remove either install method:
 
-If `oco-lite` isn't found, open a **fresh terminal** — PATH changes from a
-global install don't apply to already-open shells.
-
-To update after editing `oco-lite.mjs`, re-run `pnpm add -g file:.` from
-the project folder (this is a real install, not a live symlink — edits
-aren't picked up automatically).
-
-To remove:
-
-```powershell
+```bash
+npm uninstall -g @masgeek/oco-lite
+# or
 pnpm remove -g oco-lite
 ```
 
-### Option B — Git alias (no packaging)
+### Option C — Install directly from GitHub (no npm publish needed)
+
+Useful for trying an unpublished change, or if you don't want to wait for
+a version bump on npm:
+
+```bash
+npm install -g github:masgeek/oco-lite
+# or a specific branch/tag/commit:
+npm install -g github:masgeek/oco-lite#main
+npm install -g github:masgeek/oco-lite#1.2.0
+
+# pnpm equivalent:
+pnpm add -g github:masgeek/oco-lite
+```
+
+This clones and installs straight from the repo — no `.tgz`, no local
+path juggling. Works the same as the npm-registry install once done;
+`oco-lite` lands on your PATH either way.
+
+### Option D — Git alias (no packaging)
 
 ```powershell
 git config --global alias.aicommit '!node D:/Dev/js/oco-lite/oco-lite.mjs --commit'
 git config --global alias.aicommit-split '!node D:/Dev/js/oco-lite/oco-lite.mjs --split --commit'
 git config --global alias.aicommit-hunks '!node D:/Dev/js/oco-lite/oco-lite.mjs --split-hunks --commit'
+git config --global alias.aicommit-group '!node D:/Dev/js/oco-lite/oco-lite.mjs --group --commit'
 ```
 
-Then from any repo: `git aicommit`, `git aicommit-split`, `git aicommit-hunks`.
+Then from any repo: `git aicommit`, `git aicommit-split`, `git aicommit-hunks`, `git aicommit-group`.
 
-### Option C — Per-project npm script
+### Option E — Per-project npm script
 
 Add to `package.json`:
 
 ```json
 {
   "scripts": {
-    "commit": "node oco-lite.mjs",
-    "commit:go": "node oco-lite.mjs --commit",
-    "commit:split": "node oco-lite.mjs --split --commit",
-    "commit:hunks": "node oco-lite.mjs --split-hunks --commit"
+    "commit": "oco-lite",
+    "commit:go": "oco-lite --commit",
+    "commit:split": "oco-lite --split --commit",
+    "commit:hunks": "oco-lite --split-hunks --commit",
+    "commit:group": "oco-lite --group --commit"
   }
 }
 ```
 
-Adjust the path to `oco-lite.mjs` if it isn't at the project root.
+(assumes the npm package is installed; use `node oco-lite.mjs` instead if running from a local clone)
+
+---
+
+## Commit message format
+
+```
+<gitmoji> <type>(<scope>): <subject>
+
+* <change 1>
+* <change 2> [BREAKING CHANGE: only present if applicable]
+```
+
+Example:
+
+```
+♻️ refactor(RbacSeeder): extract permission logic into helper methods
+
+* extracted permission seeding into seedPermissions()
+* extracted ID resolution into resolvePermissionId()
+* added return type hints
+```
+
+### Gitmoji mapping
+
+| Gitmoji | Type | Meaning |
+|---|---|---|
+| ✨ | `feat` | new features |
+| 🐛 | `fix` | bug fixes |
+| 📝 | `docs` | documentation |
+| 🎨 | `style` | formatting |
+| ♻️ | `refactor` | code refactoring |
+| ⚡ | `perf` | performance |
+| ✅ | `test` | tests |
+| 🛠️ | `build` | build system |
+| 👷 | `ci` | CI/CD |
+| 🔧 | `chore` | maintenance |
+| 🔒 | `security` | security updates |
+| ♿ | `accessibility` | accessibility improvements |
+| 🗑️ | `removal` | feature or code removal |
+| 💥 | *(overrides the type's emoji)* | commit flagged as a breaking change |
+
+When a commit is flagged breaking, 💥 replaces the type's normal gitmoji as
+the leading emoji, and the specific bullet responsible is annotated inline
+with `[BREAKING CHANGE: <reason>]`. This applies in every mode — default,
+`--split`, `--split-hunks`, and `--group`.
 
 ---
 
@@ -148,11 +222,12 @@ oco-lite --help                  # usage summary
 1. Sends **all** staged files' diffs to the model in a single request, each
    truncated to `OCOLITE_GROUP_MAX_DIFF_PER_FILE` characters
 2. The model returns a JSON list of groups, each with its own file list,
-   type, scope, subject, and breaking-change flag — files are clustered
-   together only when they implement the same logical change
+   type, scope, subject, bullet-point changes, and breaking-change flag —
+   files are clustered together only when they implement the same logical
+   change
 3. Every staged file is guaranteed to end up in exactly one commit:
     - if the model misses or duplicates a file, leftover files are swept
-      into a trailing `chore: update remaining files` group rather than
+      into a trailing `🔧 chore: update remaining files` group rather than
       silently dropped
     - if the model's response doesn't parse into a valid grouping at all,
       it automatically falls back to `--split` (one commit per file)
@@ -169,29 +244,6 @@ oco-lite --help                  # usage summary
   relationship between files (e.g. a migration and the model it backs) —
   weaker models may under- or over-group. Review the printed groups before
   confirming each commit.
-
----
-
-## Breaking change detection
-
-Every generated message is classified for breaking-change risk:
-
-- removed or renamed public function/class/route
-- changed method signature
-- migration that alters an existing schema/column
-- changed config key or environment variable
-
-When flagged, the message is marked per the Conventional Commits spec:
-
-```
-feat(api)!: remove legacy /v1/schools endpoint
-
-BREAKING CHANGE: clients calling /v1/schools must migrate to /v2/schools
-```
-
-Detection is deliberately conservative — routine refactors, new files, and
-additive/optional changes are **not** flagged. If it's still too
-trigger-happy for your codebase, disable it with `--no-breaking-detection`.
 
 ---
 
@@ -261,7 +313,42 @@ with a local Ollama model:
    using a raw `D:\...` path instead of a `file://` URL.
 
 `oco-lite` sidesteps both by owning the full prompt → response → format
-pipeline directly.
+pipeline directly, using structured JSON output from the model rather than
+parsing free text.
+
+---
+
+## Why not TypeScript?
+
+Deliberately plain JavaScript. Adding TypeScript would mean a build step
+(`tsc`) and shipping compiled output instead of the source file directly —
+more moving parts for a single-file, zero-dependency CLI than it's worth.
+If the model-response parsing ever needs stronger type-checking, JSDoc
+annotations (checkable via `tsc --checkJS`, no build step) are the planned
+next step rather than a full TS rewrite.
+
+---
+
+## Release process
+
+Versions are unprefixed (`1.0.0`, not `v1.0.0`) — see `.npmrc`
+(`tag-version-prefix=""`).
+
+```bash
+npm version patch   # or minor/major — bumps package.json, commits, tags
+git push --follow-tags
+```
+
+Pushing the tag triggers `.github/workflows/publish.yml`, which publishes
+to npm automatically via **Trusted Publishing (OIDC)** — no long-lived
+`NPM_TOKEN` secret involved. `.github/workflows/ci.yml` runs on every push
+and PR: syntax-checks the script, validates `package.json`, and does a dry
+run of `npm pack`.
+
+> First-ever publish only: npm's Trusted Publisher config must point at an
+> *existing* package, so the very first release has to be published
+> manually with a token before Trusted Publishing can be configured on
+> npmjs.com for this package.
 
 ---
 
@@ -274,7 +361,7 @@ if it's running elsewhere.
 **Message still splits into multiple commits for one file**
 Use `--split-hunks` instead of the default mode — it separates by logical
 diff hunk rather than relying on the model to compress everything into one
-line.
+message.
 
 **Ollama request timed out**
 Increase `OCOLITE_TIMEOUT_MS`, reduce `OCOLITE_MAX_DIFF`, or switch to a
@@ -286,3 +373,7 @@ check the git output printed above the error; it's passed through via
 `stdio: 'inherit'`.
 
 ---
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).
