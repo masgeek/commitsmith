@@ -1,6 +1,6 @@
 {
   "name": "@masgeek/oco-lite",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Minimal, dependency-free git commit message generator using a local Ollama model. Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
   "type": "module",
   "bin": {
