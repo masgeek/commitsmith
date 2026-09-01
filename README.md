@@ -286,7 +286,3 @@ check the git output printed above the error; it's passed through via
 `stdio: 'inherit'`.
 
 ---
-
-## License
-
-Internal tool — Munywele Consulting LTD. Not published to a public registry.
