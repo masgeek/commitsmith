@@ -1,14 +1,15 @@
 import ora from 'ora';
 import { PROVIDER, MODEL, FALLBACK_MODELS, HOST, API_KEY } from '../config.mjs';
 import { die } from '../die.mjs';
-import { callOllamaOnce } from './ollama.mjs';
+import { callOllamaOnce, callOllamaCloudOnce } from './ollama.mjs';
 import { callOpenAiOnce } from './openai.mjs';
 import { callAnthropicOnce } from './anthropic.mjs';
 
 function callModelOnce(prompt, model, spinner) {
   if (PROVIDER === 'openai') return callOpenAiOnce(prompt, model, spinner);
   if (PROVIDER === 'anthropic') return callAnthropicOnce(prompt, model, spinner);
-  return callOllamaOnce(prompt, model, spinner); // ollama + ollama-cloud
+  if (PROVIDER === 'ollama-cloud') return callOllamaCloudOnce(prompt, model, spinner);
+  return callOllamaOnce(prompt, model, spinner);
 }
 
 /**
