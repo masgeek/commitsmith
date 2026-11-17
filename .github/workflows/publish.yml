@@ -3,8 +3,7 @@ name: Publish to npm
 on:
   release:
     # Trigger on any release event (published, created, etc.)
-    # This ensures the workflow runs when bump-and-tag creates a release.
-    # Types can be omitted to catch all release actions.
+    types: [published,created,prereleased]
   workflow_dispatch:
 
 # Deliberately tag-push only, not also `release: types: [published]` — a
