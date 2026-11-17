@@ -1,27 +1,52 @@
 {
   "name": "@masgeek/oco-lite",
   "version": "1.0.1",
-  "description": "Minimal, dependency-free git commit message generator using a local Ollama model. Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
+  "description": "Minimal AI-powered git commit message generator backed by local Ollama models or cloud providers (Ollama Cloud, OpenAI, Anthropic). Supports single-line, per-file, per-hunk, and grouped-by-related-change commits, with breaking-change detection.",
+  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
+  "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@12.4.0",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "oco-lite": "./oco-lite.mjs"
   },
   "files": [
     "oco-lite.mjs",
+    "src",
     "README.md",
     "LICENSE"
   ],
-  "engines": {
-    "node": ">=18"
+  "scripts": {
+    "start": "node oco-lite.mjs",
+    "commit": "node oco-lite.mjs",
+    "commit:go": "node oco-lite.mjs --commit",
+    "commit:split": "node oco-lite.mjs --split --commit",
+    "commit:hunks": "node oco-lite.mjs --split-hunks --commit",
+    "commit:group": "node oco-lite.mjs --group --commit",
+    "commit:check": "node oco-lite.mjs --check",
+    "test": "node scripts/check-syntax.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "@napi-rs/keyring": "^2.1.2",
+    "chalk": "^6.0.1",
+    "cosmiconfig": "^10.0.1",
+    "env-paths": "^4.0.0",
+    "ora": "^10.0.0"
   },
   "keywords": [
     "git",
     "commit",
     "commit-message",
-    "ollama",
+    "conventional-commits",
     "ai",
     "cli",
-    "conventional-commits",
+    "ollama",
+    "ollama-cloud",
+    "openai",
+    "anthropic",
     "local-llm"
   ],
   "repository": {
@@ -32,8 +57,6 @@
     "url": "https://github.com/masgeek/oco-lite/issues"
   },
   "homepage": "https://github.com/masgeek/oco-lite#readme",
-  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
-  "license": "MIT",
   "publishConfig": {
     "access": "public"
   }

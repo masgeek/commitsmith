@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: ['**']
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -18,11 +22,20 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Syntax check
-        run: node --check oco-lite.mjs
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Syntax check (oco-lite.mjs + every src/**/*.mjs module)
+        run: pnpm test
+
+      - name: Smoke test (exercises the full module import graph)
+        run: node oco-lite.mjs --help
 
       - name: Verify package.json is valid
         run: node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"
 
       - name: Dry-run pack (fails if 'files' list or bin path is broken)
-        run: npm pack --dry-run
+        run: pnpm pack --pack-destination /tmp
