@@ -25,7 +25,19 @@ export function formatCommitMessage(parsed) {
   const changes = Array.isArray(parsed.changes)
     ? parsed.changes
         .filter((c) => typeof c === 'string' && c.trim().length > 0)
-        .map((c) => c.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/\.$/, ''))
+        .map((c) =>
+          c
+            .trim()
+            .replace(/^["'`]+|["'`]+$/g, '')
+            // Some models embed "[BREAKING CHANGE: ...]" directly into the
+            // change text itself despite the prompt asking them not to —
+            // strip it here so we don't end up appending our own copy on
+            // top and showing it twice.
+            .replace(/\s*\[?BREAKING CHANGE:[^\]\n]*\]?/gi, '')
+            .trim()
+            .replace(/\.$/, '')
+        )
+        .filter((c) => c.length > 0)
         .slice(0, 5)
     : [];
 
