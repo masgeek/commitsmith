@@ -15,19 +15,28 @@
  *   node oco-lite.mjs                    print a single message for all staged changes
  *   node oco-lite.mjs --commit           ... and commit it (with confirmation)
  *   node oco-lite.mjs -y                 ... and commit it (no confirmation)
- *   node oco-lite.mjs --split            one message/commit per staged FILE
+ *   node oco-lite.mjs --split            auto-detect related files and merge them;
+ *                                         everything else gets one commit per file
+ *   node oco-lite.mjs --split --no-group-detection  strict one commit per staged FILE
  *   node oco-lite.mjs --split-hunks      one message/commit per diff HUNK (logical change)
- *   node oco-lite.mjs --group            cluster staged files by RELATED change, one commit per group
+ *   node oco-lite.mjs --group            same relatedness detection as --split, without the
+ *                                         per-file fallback for a single staged file
+ *   node oco-lite.mjs --dry-run          (--split-hunks only) preview hunks/messages, touch nothing
  *   node oco-lite.mjs --help             show this help
  *
- * --group mode:
+ * At any confirmation prompt, answering "e" opens the generated message in
+ * $GIT_EDITOR/$EDITOR for editing before committing.
+ *
+ * --split / --group relatedness detection:
  *   Looks at all staged files together and asks the model to cluster files
  *   that belong to the same logical change (e.g. a migration + model +
  *   seeder added for the same feature) into one commit, while keeping
- *   genuinely unrelated files in separate commits. Different from --split
- *   (always one commit per file) and --split-hunks (always one commit per
- *   hunk) — --group is the only mode that can COMBINE multiple files into
- *   a single commit based on detected relatedness.
+ *   genuinely unrelated files in separate commits — each group gets its own
+ *   breaking-change assessment (see below). --split falls back to a strict
+ *   one-commit-per-file split if nothing is related or the model's grouping
+ *   response doesn't parse; pass --no-group-detection to always get the
+ *   strict per-file behavior. Different from --split-hunks, which always
+ *   produces one commit per diff hunk within a single file.
  *
  * Commit message format:
  *   <gitmoji> <type>(<scope>): <subject>
@@ -54,11 +63,15 @@
  *   OCOLITE_HOST       default: http://localhost:11434
  *   OCOLITE_MAX_DIFF   default: 6000   (chars of diff sent to the model per request)
  *   OCOLITE_TIMEOUT_MS default: 60000  (per-request timeout to Ollama)
- *   OCOLITE_GROUP_MAX_DIFF_PER_FILE default: 1200 (chars of each file's diff sent in --group mode)
+ *   OCOLITE_GROUP_MAX_DIFF_PER_FILE default: 1200 (chars of each file's diff sent during
+ *                                                   relatedness detection in --split/--group)
  */
 
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import readline from 'node:readline';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const MODEL = process.env.OCOLITE_MODEL || 'qwen2.5-coder:7b';
 const HOST = process.env.OCOLITE_HOST || 'http://localhost:11434';
@@ -94,6 +107,7 @@ const autoYes = args.includes('-y');
 const splitMode = args.includes('--split');
 const splitHunksMode = args.includes('--split-hunks');
 const groupMode = args.includes('--group');
+const dryRun = args.includes('--dry-run');
 const breakingDetectionEnabled = !args.includes('--no-breaking-detection');
 const helpRequested = args.includes('--help') || args.includes('-h');
 
@@ -104,11 +118,16 @@ Usage:
   oco-lite                        print message for all staged changes
   oco-lite --commit               generate + confirm + commit
   oco-lite -y                     generate + commit, no confirmation
-  oco-lite --split [--commit|-y]  one commit per staged file
+  oco-lite --split [--commit|-y]  merge related staged files into one commit each,
+                                   one commit per file for everything else
+  oco-lite --split --no-group-detection  strict one commit per staged file
   oco-lite --split-hunks [...]    one commit per logical diff hunk
-  oco-lite --group [--commit|-y]  cluster related files into one commit each
+  oco-lite --split-hunks --dry-run  preview hunks/messages, no staging or commits
+  oco-lite --group [--commit|-y]  same relatedness detection as --split
   oco-lite --no-breaking-detection  skip breaking-change classification
   oco-lite --help                 show this help
+
+At any confirmation prompt, answer "e" to edit the message in $GIT_EDITOR/$EDITOR before committing.
 
 Env vars: OCOLITE_MODEL, OCOLITE_HOST, OCOLITE_MAX_DIFF, OCOLITE_TIMEOUT_MS`);
 }
@@ -407,8 +426,8 @@ function fallbackFromRawText(raw) {
   return { message: cleaned, breaking: false };
 }
 
-async function generateMessageFor(pathspec, label) {
-  const diff = truncateDiff(getStagedDiff(pathspec), MAX_DIFF);
+async function generateMessageForDiffText(diffText, label) {
+  const diff = truncateDiff(diffText, MAX_DIFF);
   console.log(`\nGenerating commit message for ${label} with ${MODEL}...`);
 
   let raw;
@@ -435,14 +454,60 @@ async function generateMessageFor(pathspec, label) {
   return result.message;
 }
 
-function confirm(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
+async function generateMessageFor(pathspec, label) {
+  return generateMessageForDiffText(getStagedDiff(pathspec), label);
+}
+
+/** Open `message` in $GIT_EDITOR/$EDITOR for editing; returns the edited text, or the original if the editor fails or leaves it empty. */
+function editMessageInEditor(message) {
+  const editor = process.env.GIT_EDITOR || process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');
+  const tmpFile = path.join(os.tmpdir(), `oco-lite-msg-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+  fs.writeFileSync(tmpFile, message, 'utf8');
+
+  try {
+    const result = spawnSync(`${editor} ${JSON.stringify(tmpFile)}`, { stdio: 'inherit', shell: true });
+    if (result.error || result.status !== 0) {
+      console.warn(`Editor "${editor}" did not exit cleanly; keeping the previous message.`);
+      return message;
+    }
+    const edited = fs.readFileSync(tmpFile, 'utf8').replace(/\r\n/g, '\n').replace(/\n+$/, '');
+    return edited.trim() ? edited : message;
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      // best-effort cleanup
+    }
+  }
+}
+
+/**
+ * Prompt for confirmation, allowing "e" to edit the message in $EDITOR first
+ * (looping back to the same prompt with the edited text). Returns the final
+ * { proceed, message }.
+ */
+async function confirmWithEdit(question, message) {
+  if (autoYes) return { proceed: true, message };
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
+
+  let current = message;
+  try {
+    for (;;) {
+      const answer = (await ask(question)).trim();
+      if (/^e(dit)?$/i.test(answer)) {
+        current = editMessageInEditor(current);
+        console.log('——————————————————');
+        console.log(current);
+        console.log('——————————————————');
+        continue;
+      }
+      return { proceed: /^y(es)?$/i.test(answer), message: current };
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 function commitWithMessage(message, pathspec) {
@@ -462,13 +527,14 @@ async function runSingleMode() {
   const message = await generateMessageFor(null, 'all staged changes');
   if (!shouldCommit) return;
 
-  const proceed = autoYes || (await confirm('\nCommit with this message? [y/N] '));
+  const { proceed, message: finalMessage } = await confirmWithEdit('\nCommit with this message? [y/N/e] ', message);
   if (!proceed) return console.log('Aborted. Nothing committed.');
-  commitWithMessage(message, null);
+  commitWithMessage(finalMessage, null);
 }
 
-async function runSplitMode() {
-  const files = getStagedFiles();
+/** Strict one-commit-per-staged-file mode, with no relatedness detection. */
+async function runStrictSplitMode(files) {
+  files = files || getStagedFiles();
   if (files.length === 0) die('No staged files found.');
 
   console.log(`Splitting into ${files.length} commit(s), one per staged file:\n`);
@@ -477,88 +543,27 @@ async function runSplitMode() {
     const message = await generateMessageFor(file, file);
     if (!shouldCommit) continue;
 
-    const proceed = autoYes || (await confirm(`Commit "${file}" with this message? [y/N] `));
+    const { proceed, message: finalMessage } = await confirmWithEdit(`Commit "${file}" with this message? [y/N/e] `, message);
     if (!proceed) {
       console.log(`Skipped ${file}. It remains staged.`);
       continue;
     }
-    commitWithMessage(message, file);
+    commitWithMessage(finalMessage, file);
   }
   console.log('\nDone.');
 }
 
-async function runSplitHunksMode() {
-  const fileDiffs = getFileDiffs();
-  if (fileDiffs.length === 0) die('No staged changes found.');
-
-  console.log(`Splitting into logical (per-hunk) commits across ${fileDiffs.length} file(s):\n`);
-
-  execSync('git reset', { stdio: 'ignore' });
-
-  for (const fileDiff of fileDiffs) {
-    const filePath = extractPathFromFileDiff(fileDiff);
-    if (!filePath) {
-      console.warn('Could not determine file path for a diff chunk, skipping.');
-      continue;
-    }
-
-    const parsed = parseFileDiffIntoHunks(fileDiff);
-
-    if (!parsed || parsed.hunks.length <= 1) {
-      execSync(`git add -- ${JSON.stringify(filePath)}`, { stdio: 'ignore' });
-      const message = await generateMessageFor(null, filePath);
-      if (shouldCommit) {
-        const proceed = autoYes || (await confirm(`Commit "${filePath}" with this message? [y/N] `));
-        if (proceed) commitWithMessage(message, filePath);
-        else console.log(`Skipped ${filePath}.`);
-      }
-      continue;
-    }
-
-    console.log(`\n${filePath}: ${parsed.hunks.length} hunk(s) detected`);
-
-    for (let i = 0; i < parsed.hunks.length; i++) {
-      const patch = `${parsed.header}\n${parsed.hunks[i]}\n`;
-
-      try {
-        execSync('git apply --cached --whitespace=nowarn -', { input: patch });
-      } catch {
-        console.warn(
-          `  Hunk ${i + 1} failed to apply cleanly (context conflict). ` +
-            `Falling back to committing the remaining changes in ${filePath} as one commit.`
-        );
-        execSync(`git add -- ${JSON.stringify(filePath)}`, { stdio: 'ignore' });
-        const message = await generateMessageFor(null, `${filePath} (remaining changes)`);
-        if (shouldCommit) {
-          const proceed = autoYes || (await confirm(`Commit remaining "${filePath}" changes? [y/N] `));
-          if (proceed) commitWithMessage(message, filePath);
-        }
-        break;
-      }
-
-      const message = await generateMessageFor(null, `${filePath} (hunk ${i + 1}/${parsed.hunks.length})`);
-      if (!shouldCommit) continue;
-
-      const proceed = autoYes || (await confirm(`Commit this hunk of "${filePath}"? [y/N] `));
-      if (!proceed) {
-        console.log(`  Skipped hunk ${i + 1}. It remains staged — commit or reset it manually.`);
-        continue;
-      }
-      commitWithMessage(message, filePath);
-    }
-  }
-  console.log('\nDone.');
-}
-
-async function runGroupMode() {
-  const files = getStagedFiles();
-  if (files.length === 0) die('No staged files found.');
-
-  if (files.length === 1) {
-    console.log('Only one staged file — nothing to group, falling back to single-file mode.');
-    return runSingleMode();
-  }
-
+/**
+ * Sends all staged files' diffs to the model in one request and asks it to
+ * cluster files that implement the same logical change into groups, so a
+ * related edit spread across several files becomes one commit instead of
+ * several. Each group gets its own breaking-change assessment.
+ *
+ * Returns true if a valid grouping was found and handled (printed, and
+ * committed if --commit/-y was passed), or false if the model's response
+ * didn't parse into a valid grouping — the caller decides the fallback.
+ */
+async function runGroupedCommitFlow(files) {
   const fileEntries = files.map((path) => ({
     path,
     diff: truncateDiff(getStagedDiff(path), GROUP_MAX_DIFF_PER_FILE),
@@ -574,10 +579,7 @@ async function runGroupMode() {
   }
 
   const groups = parseGroupingResult(raw, files);
-  if (!groups) {
-    console.warn('Could not parse a valid grouping from the model. Falling back to --split (one commit per file).');
-    return runSplitMode();
-  }
+  if (!groups) return false;
 
   console.log(`\nDetected ${groups.length} logical group(s):\n`);
   groups.forEach((g, i) => {
@@ -589,22 +591,145 @@ async function runGroupMode() {
     console.log('');
   });
 
-  if (!shouldCommit) return;
+  if (!shouldCommit) return true;
 
   for (const g of groups) {
-    const proceed =
-      autoYes || (await confirm(`Commit group [${g.files.join(', ')}] with the above message? [y/N] `));
+    const { proceed, message: finalMessage } = await confirmWithEdit(
+      `Commit group [${g.files.join(', ')}] with the above message? [y/N/e] `,
+      g.message
+    );
     if (!proceed) {
       console.log(`Skipped group [${g.files.join(', ')}]. Files remain staged.`);
       continue;
     }
-    execFileSync('git', ['commit', '-m', g.message, '--', ...g.files], { stdio: 'inherit' });
+    execFileSync('git', ['commit', '-m', finalMessage, '--', ...g.files], { stdio: 'inherit' });
   }
   console.log('\nDone.');
+  return true;
+}
+
+/**
+ * Default --split behavior: detect related files across everything staged
+ * and merge them into one commit each, falling back to a strict
+ * one-commit-per-file split for files with no detected relationship (or
+ * entirely, if the model's grouping response doesn't parse). Pass
+ * --no-group-detection to skip relatedness detection and always get the old
+ * strict one-commit-per-file behavior.
+ */
+async function runSplitMode() {
+  const files = getStagedFiles();
+  if (files.length === 0) die('No staged files found.');
+
+  if (files.length === 1 || args.includes('--no-group-detection')) {
+    return runStrictSplitMode(files);
+  }
+
+  console.log(`Checking ${files.length} staged files for related changes before splitting...\n`);
+  const grouped = await runGroupedCommitFlow(files);
+  if (!grouped) {
+    console.warn('Could not detect related groups from the model. Falling back to one commit per file.');
+    return runStrictSplitMode(files);
+  }
+}
+
+async function runSplitHunksMode() {
+  const fileDiffs = getFileDiffs();
+  if (fileDiffs.length === 0) die('No staged changes found.');
+
+  console.log(
+    dryRun
+      ? `Previewing logical (per-hunk) commits across ${fileDiffs.length} file(s) — nothing will be staged or committed:\n`
+      : `Splitting into logical (per-hunk) commits across ${fileDiffs.length} file(s):\n`
+  );
+
+  if (!dryRun) execSync('git reset', { stdio: 'ignore' });
+
+  for (const fileDiff of fileDiffs) {
+    const filePath = extractPathFromFileDiff(fileDiff);
+    if (!filePath) {
+      console.warn('Could not determine file path for a diff chunk, skipping.');
+      continue;
+    }
+
+    const parsed = parseFileDiffIntoHunks(fileDiff);
+
+    if (!parsed || parsed.hunks.length <= 1) {
+      const message = await generateMessageForDiffText(fileDiff, filePath);
+      if (dryRun) continue;
+
+      execSync(`git add -- ${JSON.stringify(filePath)}`, { stdio: 'ignore' });
+      if (shouldCommit) {
+        const { proceed, message: finalMessage } = await confirmWithEdit(`Commit "${filePath}" with this message? [y/N/e] `, message);
+        if (proceed) commitWithMessage(finalMessage, filePath);
+        else console.log(`Skipped ${filePath}.`);
+      }
+      continue;
+    }
+
+    console.log(`\n${filePath}: ${parsed.hunks.length} hunk(s) detected`);
+
+    for (let i = 0; i < parsed.hunks.length; i++) {
+      const patch = `${parsed.header}\n${parsed.hunks[i]}\n`;
+      const label = `${filePath} (hunk ${i + 1}/${parsed.hunks.length})`;
+
+      if (dryRun) {
+        await generateMessageForDiffText(patch, label);
+        continue;
+      }
+
+      try {
+        execSync('git apply --cached --whitespace=nowarn -', { input: patch });
+      } catch {
+        console.warn(
+          `  Hunk ${i + 1} failed to apply cleanly (context conflict). ` +
+            `Falling back to committing the remaining changes in ${filePath} as one commit.`
+        );
+        execSync(`git add -- ${JSON.stringify(filePath)}`, { stdio: 'ignore' });
+        const message = await generateMessageFor(null, `${filePath} (remaining changes)`);
+        if (shouldCommit) {
+          const { proceed, message: finalMessage } = await confirmWithEdit(`Commit remaining "${filePath}" changes? [y/N/e] `, message);
+          if (proceed) commitWithMessage(finalMessage, filePath);
+        }
+        break;
+      }
+
+      const message = await generateMessageFor(null, label);
+      if (!shouldCommit) continue;
+
+      const { proceed, message: finalMessage } = await confirmWithEdit(`Commit this hunk of "${filePath}"? [y/N/e] `, message);
+      if (!proceed) {
+        console.log(`  Skipped hunk ${i + 1}. It remains staged — commit or reset it manually.`);
+        continue;
+      }
+      commitWithMessage(finalMessage, filePath);
+    }
+  }
+  console.log(dryRun ? '\nDry run complete. Nothing was staged or committed.' : '\nDone.');
+}
+
+/** Explicit alias of the --split default: always attempts grouping (never a strict-split fallback). */
+async function runGroupMode() {
+  const files = getStagedFiles();
+  if (files.length === 0) die('No staged files found.');
+
+  if (files.length === 1) {
+    console.log('Only one staged file — nothing to group, falling back to single-file mode.');
+    return runSingleMode();
+  }
+
+  const grouped = await runGroupedCommitFlow(files);
+  if (!grouped) {
+    console.warn('Could not parse a valid grouping from the model. Falling back to one commit per file.');
+    return runStrictSplitMode(files);
+  }
 }
 
 async function main() {
   if (helpRequested) return printHelp();
+
+  if (dryRun && !splitHunksMode) {
+    console.warn('--dry-run is only supported with --split-hunks; ignoring.');
+  }
 
   assertGitRepo();
   await assertOllamaReachable();

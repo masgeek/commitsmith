@@ -24,9 +24,13 @@ control over the output format.
   annotates the relevant bullet inline
 - Four granularities:
     - one message for all staged changes
-    - one commit **per staged file** (`--split`)
+    - `--split` — auto-detects edits spread across multiple files that belong
+      to the same logical change and merges them into one commit; everything
+      else still gets one commit per file (pass `--no-group-detection` for the
+      old strict one-commit-per-file behavior)
     - one commit **per logical diff hunk** (`--split-hunks`)
-    - one commit **per group of related files** (`--group`) — the only mode that can *combine* multiple files into a single commit
+    - `--group` — the same relatedness detection as `--split`, without the
+      single-file fallback
 - Pre-flight checks (git repo detection, Ollama reachability)
 - Request timeout handling — no hangs on a stuck Ollama call
 - Zero npm dependencies — pure Node.js (`node:child_process`, `node:readline`, native `fetch`)
@@ -192,47 +196,61 @@ oco-lite                        # print a message for all staged changes (no com
 oco-lite --commit                # generate, confirm, then commit
 oco-lite -y                      # generate and commit, no confirmation
 
-oco-lite --split                 # print one message per staged file
-oco-lite --split --commit        # one commit per staged file, confirm each
-oco-lite --split -y              # one commit per staged file, no prompts
+oco-lite --split                 # auto-detect related files, merge them; one message per file otherwise
+oco-lite --split --commit        # same, confirm and commit each resulting commit
+oco-lite --split -y              # same, no confirmation prompts
+oco-lite --split --no-group-detection -y  # strict one commit per staged file, no relatedness detection
 
 oco-lite --split-hunks --commit  # one commit per logical diff hunk
 oco-lite --split-hunks -y        # same, no confirmation prompts
 
-oco-lite --group --commit        # cluster related staged files, one commit per group
+oco-lite --group --commit        # cluster related staged files, one commit per group (no per-file fallback)
 oco-lite --group -y              # same, no confirmation prompts
 
+oco-lite --split-hunks --dry-run # preview hunks + messages, no staging or commits
 oco-lite --no-breaking-detection # skip breaking-change classification
 oco-lite --help                  # usage summary
 ```
+
+At any confirmation prompt (`[y/N/e]`), answer `e` to open the generated message
+in `$GIT_EDITOR`/`$EDITOR` (falls back to `notepad`/`vi`) before committing.
 
 ### Which mode should I use?
 
 | Mode | Granularity | Use when |
 |---|---|---|
 | default | one commit for everything staged | quick, single logical change across files |
-| `--split` | one commit per file | changes to unrelated files staged together |
+| `--split` | merges related files into one commit each, one commit per file for everything else | several files staged together, some of which belong to the same feature/fix and some don't (e.g. a migration + model + seeder for one feature, plus an unrelated typo fix elsewhere) — the common case |
+| `--split --no-group-detection` | strict one commit per file | you specifically want no relatedness detection, e.g. for a quick skim-and-commit workflow |
 | `--split-hunks` | one commit per diff hunk | one file with several distinct, unrelated edits (e.g. multiple refactors in one seeder/class) |
-| `--group` | one commit per detected group of related files | several files staged together, some of which belong to the same feature/fix and some don't (e.g. a migration + model + seeder for one feature, plus an unrelated typo fix elsewhere) |
+| `--group` | one commit per detected group of related files, no per-file fallback for a single staged file | same relatedness detection as `--split`, when you want to be explicit about expecting groups |
 
 ---
 
-## `--group` — how it works and its limits
+## `--split` / `--group` relatedness detection — how it works and its limits
 
 1. Sends **all** staged files' diffs to the model in a single request, each
    truncated to `OCOLITE_GROUP_MAX_DIFF_PER_FILE` characters
 2. The model returns a JSON list of groups, each with its own file list,
    type, scope, subject, bullet-point changes, and breaking-change flag —
    files are clustered together only when they implement the same logical
-   change
+   change. Each group's breaking-change flag is assessed independently, so a
+   breaking rename split across two files is still flagged 💥 even though
+   the change touches multiple files.
 3. Every staged file is guaranteed to end up in exactly one commit:
     - if the model misses or duplicates a file, leftover files are swept
       into a trailing `🔧 chore: update remaining files` group rather than
       silently dropped
     - if the model's response doesn't parse into a valid grouping at all,
-      it automatically falls back to `--split` (one commit per file)
-4. If only one file is staged, there's nothing to group — it falls back to
-   the default single-commit mode
+      `--split` automatically falls back to a strict one-commit-per-file
+      split, and `--group` does the same
+4. For `--split`, if only one file is staged there's nothing to detect
+   relatedness among, so it skips straight to a one-commit-per-file split
+   (trivially, a single commit). `--group` falls back to the default
+   single-commit mode instead in that case.
+5. Pass `--no-group-detection` to `--split` to skip this step entirely and
+   always get the strict one-commit-per-file behavior from before this
+   feature existed.
 
 **Caveats:**
 
@@ -268,7 +286,17 @@ oco-lite --help                  # usage summary
   committed and the rest left **unstaged** in your working tree. Just
   `git add` and re-run.
 
-Test on a low-stakes branch or file before trusting it on real work.
+Test on a low-stakes branch or file before trusting it on real work, or use
+`--dry-run` (below) to preview without touching the index at all.
+
+### `--dry-run`
+
+`oco-lite --split-hunks --dry-run` previews the detected hunks and their
+generated messages without running `git reset`, `git apply --cached`, or any
+commit — your staged changes are left exactly as they were. Only supported
+with `--split-hunks` (the only mode that mutates the index as part of
+generating messages); passing it with other modes prints a warning and is
+otherwise ignored.
 
 ---
 
