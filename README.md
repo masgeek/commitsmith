@@ -370,10 +370,14 @@ precedence over built-in defaults.
 ### `oco-lite init`
 
 The fastest way to set up a project: an interactive wizard that asks for a
-provider, model, host, breaking-change preference, and optional fallback
-models, then writes a project-local `.oco-literc.json`. It never writes an
-API key to disk — if the chosen provider needs one, it prints the right
-`export`/`$env:` command for your shell instead.
+provider, host, and (for cloud providers) an API key, then **fetches that
+provider's actual available models live** and lets you pick one from a list
+instead of guessing a name — falling back to free-text entry if the fetch
+fails (e.g. Ollama isn't running, or the key is wrong). Also asks for a
+breaking-change preference and optional fallback models, then writes a
+project-local `.oco-literc.json`. It never writes an API key to disk — if
+the chosen provider needs one, it prints the right `export`/`$env:` command
+for your shell instead.
 
 ```bash
 oco-lite init
@@ -482,6 +486,7 @@ src/
     stream.mjs               shared SSE/NDJSON streaming + timeout handling
     ollama.mjs, openai.mjs, anthropic.mjs   one per provider's wire format
     index.mjs                 provider dispatch + model-fallback retry loop
+    list-models.mjs           live "what models exist" lookup, used by `oco-lite init`
   modes/
     single.mjs, split.mjs, group.mjs, split-hunks.mjs, check.mjs, init.mjs   one per CLI mode
 ```

@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as clack from '@clack/prompts';
 import { DEFAULT_HOSTS, DEFAULT_MODELS } from '../config.mjs';
+import { listModelsFor } from '../providers/list-models.mjs';
+
+const CUSTOM_MODEL = '__custom__';
 
 const PROVIDER_OPTIONS = [
   { value: 'ollama', label: 'Ollama (local)', hint: 'default, no API key, needs `ollama serve` running' },
@@ -16,6 +19,43 @@ function cancelled(value) {
     return true;
   }
   return false;
+}
+
+/** Asks which model to use, offering a live-fetched list when one's available, else a free-text fallback. */
+async function promptForModel(provider, host, apiKey) {
+  const s = clack.spinner();
+  s.start('Fetching available models...');
+
+  let models = [];
+  try {
+    models = await listModelsFor(provider, host, apiKey);
+    s.stop(models.length > 0 ? `Found ${models.length} model(s).` : 'No models found.');
+  } catch (err) {
+    s.stop('Could not fetch models automatically.');
+    clack.log.warn(`${err.message} — you can still type a model name manually.`);
+  }
+
+  if (models.length === 0) {
+    return clack.text({
+      message: 'Model to use',
+      placeholder: DEFAULT_MODELS[provider],
+      defaultValue: DEFAULT_MODELS[provider],
+    });
+  }
+
+  const choice = await clack.select({
+    message: 'Model to use',
+    options: [...models.map((m) => ({ value: m, label: m })), { value: CUSTOM_MODEL, label: 'Other (type manually)' }],
+    initialValue: models.includes(DEFAULT_MODELS[provider]) ? DEFAULT_MODELS[provider] : models[0],
+  });
+  if (cancelled(choice)) return choice;
+  if (choice !== CUSTOM_MODEL) return choice;
+
+  return clack.text({
+    message: 'Model name',
+    placeholder: DEFAULT_MODELS[provider],
+    defaultValue: DEFAULT_MODELS[provider],
+  });
 }
 
 /**
@@ -34,19 +74,24 @@ export async function runInitMode() {
   });
   if (cancelled(provider)) return;
 
-  const model = await clack.text({
-    message: 'Model to use',
-    placeholder: DEFAULT_MODELS[provider],
-    defaultValue: DEFAULT_MODELS[provider],
-  });
-  if (cancelled(model)) return;
-
   const host = await clack.text({
     message: 'API host',
     placeholder: DEFAULT_HOSTS[provider],
     defaultValue: DEFAULT_HOSTS[provider],
   });
   if (cancelled(host)) return;
+
+  let apiKey = '';
+  if (provider !== 'ollama') {
+    apiKey = await clack.password({
+      message: `API key for ${provider} (used to list models and show you how to set it — never written to disk)`,
+      validate: (value) => (!value ? 'An API key is required for this provider.' : undefined),
+    });
+    if (cancelled(apiKey)) return;
+  }
+
+  const model = await promptForModel(provider, host || DEFAULT_HOSTS[provider], apiKey);
+  if (cancelled(model)) return;
 
   const breakingDetection = await clack.confirm({
     message: 'Enable breaking-change detection?',
@@ -60,14 +105,6 @@ export async function runInitMode() {
     defaultValue: '',
   });
   if (cancelled(fallbackRaw)) return;
-
-  let apiKey = '';
-  if (provider !== 'ollama') {
-    apiKey = await clack.password({
-      message: `API key for ${provider} (used only to show you how to set it — never written to disk)`,
-    });
-    if (cancelled(apiKey)) return;
-  }
 
   const config = {
     provider,
