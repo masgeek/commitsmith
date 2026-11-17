@@ -1,16 +1,27 @@
 {
   "name": "@masgeek/oco-lite",
   "version": "1.0.1",
-  "description": "Minimal, dependency-free git commit message generator using a local Ollama model. Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
+  "description": "Minimal git commit message generator backed by a local Ollama model or a cloud provider (Ollama Cloud, OpenAI, Anthropic). Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
   "type": "module",
   "bin": {
     "oco-lite": "./oco-lite.mjs"
   },
   "files": [
     "oco-lite.mjs",
+    "src",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "start": "node oco-lite.mjs",
+    "commit": "node oco-lite.mjs",
+    "commit:go": "node oco-lite.mjs --commit",
+    "commit:split": "node oco-lite.mjs --split --commit",
+    "commit:hunks": "node oco-lite.mjs --split-hunks --commit",
+    "commit:group": "node oco-lite.mjs --group --commit",
+    "commit:check": "node oco-lite.mjs --check",
+    "test": "node scripts/check-syntax.mjs"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -19,6 +30,8 @@
     "commit",
     "commit-message",
     "ollama",
+    "openai",
+    "anthropic",
     "ai",
     "cli",
     "conventional-commits",
@@ -36,5 +49,10 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "chalk": "^6.0.1",
+    "cosmiconfig": "^10.0.1",
+    "ora": "^10.0.0"
   }
 }

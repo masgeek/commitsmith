@@ -1,16 +1,11 @@
 # oco-lite
 
-Minimal, dependency-free git commit message generator powered by a local
-[Ollama](https://ollama.com) model. Built as a lightweight replacement for
-[OpenCommit](https://github.com/di-sukharev/opencommit) after hitting two
-unresolved OpenCommit issues: multi-line output for single-file changes
-([#315](https://github.com/di-sukharev/opencommit/issues/315),
-[#114](https://github.com/di-sukharev/opencommit/issues/114)) and a Windows
-ESM path crash in `@commitlint` prompt-module mode.
+Minimal git commit message generator powered by a local [Ollama](https://ollama.com)
+model, Ollama Cloud, OpenAI, Anthropic, or any OpenAI-compatible endpoint.
 
-`oco-lite` talks to your local Ollama instance directly with a strict,
-structured prompt — no OpenCommit dependency, no ESM config loading, full
-control over the output format.
+`oco-lite` talks to its model provider directly with a strict, structured
+prompt — full control over the output format, no third-party prompt
+templates or config-loading machinery in the way.
 
 ---
 
@@ -31,20 +26,65 @@ control over the output format.
     - one commit **per logical diff hunk** (`--split-hunks`)
     - `--group` — the same relatedness detection as `--split`, without the
       single-file fallback
-- Pre-flight checks (git repo detection, Ollama reachability)
-- Request timeout handling — no hangs on a stuck Ollama call
-- Zero npm dependencies — pure Node.js (`node:child_process`, `node:readline`, native `fetch`)
+- **Multiple providers** — local Ollama (default), Ollama Cloud, OpenAI, Anthropic,
+  or any OpenAI-compatible endpoint (Groq, Together, OpenRouter, a self-hosted
+  vLLM/LM Studio server, etc.) — see [Providers](#providers)
+- `--check` — re-classifies the last commit's diff and warns if the message
+  someone wrote by hand looks inconsistent (wrong type, missed breaking-change
+  flag); exits non-zero, so it doubles as a CI/hook gate
+- Streaming generation with live progress, and automatic fallback across
+  `OCOLITE_FALLBACK_MODELS` if the primary model fails or times out
+- Pre-flight checks (git repo detection, provider reachability)
+- Request timeout handling — no hangs on a stuck call
 
 ---
 
 ## Requirements
 
 - Node.js **18+** (uses native `fetch`)
-- [Ollama](https://ollama.com) running locally with a pulled model, e.g.:
-  ```bash
-  ollama pull qwen2.5-coder:7b
-  ```
 - Git
+- One of:
+    - [Ollama](https://ollama.com) running locally with a pulled model (default provider):
+      ```bash
+      ollama pull qwen2.5-coder:7b
+      ```
+    - An [Ollama Cloud](https://ollama.com), [OpenAI](https://platform.openai.com), or
+      [Anthropic](https://console.anthropic.com) API key — see [Providers](#providers)
+
+---
+
+## Providers
+
+Set via `OCOLITE_PROVIDER` (env var or `provider` in a config file — see
+[Configuration](#configuration)). Default: `ollama`.
+
+| Provider | `OCOLITE_PROVIDER` | API key required | Default host |
+|---|---|---|---|
+| Local Ollama | `ollama` | no | `http://localhost:11434` |
+| Ollama Cloud | `ollama-cloud` | yes (`OCOLITE_API_KEY`) | `https://ollama.com` |
+| OpenAI (or any OpenAI-compatible endpoint) | `openai` | yes | `https://api.openai.com/v1` |
+| Anthropic | `anthropic` | yes | `https://api.anthropic.com` |
+
+```bash
+# Local Ollama (default) — nothing to set
+oco-lite
+
+# Ollama Cloud — https://ollama.com/settings/keys
+OCOLITE_PROVIDER=ollama-cloud OCOLITE_API_KEY=... OCOLITE_MODEL=qwen3-coder:480b-cloud oco-lite
+
+# OpenAI
+OCOLITE_PROVIDER=openai OCOLITE_API_KEY=sk-... OCOLITE_MODEL=gpt-4o-mini oco-lite
+
+# Anthropic
+OCOLITE_PROVIDER=anthropic OCOLITE_API_KEY=sk-ant-... OCOLITE_MODEL=claude-haiku-5-5 oco-lite
+
+# Any OpenAI-compatible endpoint (Groq, Together, OpenRouter, a self-hosted
+# vLLM/LM Studio server, etc.) — just point OCOLITE_PROVIDER=openai at it:
+OCOLITE_PROVIDER=openai OCOLITE_HOST=https://api.groq.com/openai/v1 OCOLITE_API_KEY=... OCOLITE_MODEL=llama-3.3-70b-versatile oco-lite
+```
+
+`--split`/`--group` relatedness detection and `--check` use the same provider
+and model as everything else — no separate configuration needed.
 
 ---
 
@@ -133,12 +173,18 @@ Add to `package.json`:
     "commit:go": "oco-lite --commit",
     "commit:split": "oco-lite --split --commit",
     "commit:hunks": "oco-lite --split-hunks --commit",
-    "commit:group": "oco-lite --group --commit"
+    "commit:group": "oco-lite --group --commit",
+    "commit:check": "oco-lite --check"
   }
 }
 ```
 
 (assumes the npm package is installed; use `node oco-lite.mjs` instead if running from a local clone)
+
+This repo's own `package.json` ships these same scripts (`npm run commit`,
+`commit:go`, `commit:split`, `commit:hunks`, `commit:group`, `commit:check`) for
+working on `oco-lite` itself, plus `npm test`, which syntax-checks `oco-lite.mjs`
+and every module under `src/` (see [Project structure](#project-structure)).
 
 ---
 
@@ -182,8 +228,9 @@ Example:
 
 When a commit is flagged breaking, 💥 replaces the type's normal gitmoji as
 the leading emoji, and the specific bullet responsible is annotated inline
-with `[BREAKING CHANGE: <reason>]`. This applies in every mode — default,
-`--split`, `--split-hunks`, and `--group`.
+with `[BREAKING CHANGE: <reason>]`. This applies in every generation mode —
+default, `--split`, `--split-hunks`, and `--group`. `--check` reuses the same
+classification to audit an existing commit message instead of generating one.
 
 ---
 
@@ -208,6 +255,7 @@ oco-lite --group --commit        # cluster related staged files, one commit per 
 oco-lite --group -y              # same, no confirmation prompts
 
 oco-lite --split-hunks --dry-run # preview hunks + messages, no staging or commits
+oco-lite --check                 # re-classify HEAD's diff, warn if its message looks inconsistent
 oco-lite --no-breaking-detection # skip breaking-change classification
 oco-lite --help                  # usage summary
 ```
@@ -224,6 +272,7 @@ in `$GIT_EDITOR`/`$EDITOR` (falls back to `notepad`/`vi`) before committing.
 | `--split --no-group-detection` | strict one commit per file | you specifically want no relatedness detection, e.g. for a quick skim-and-commit workflow |
 | `--split-hunks` | one commit per diff hunk | one file with several distinct, unrelated edits (e.g. multiple refactors in one seeder/class) |
 | `--group` | one commit per detected group of related files, no per-file fallback for a single staged file | same relatedness detection as `--split`, when you want to be explicit about expecting groups |
+| `--check` | read-only — classifies HEAD's existing diff | verifying (by hand, in CI, or in a hook) that someone's handwritten commit message didn't miss a breaking-change flag or use the wrong type |
 
 ---
 
@@ -300,19 +349,61 @@ otherwise ignored.
 
 ---
 
+## `--check`
+
+`oco-lite --check` re-sends HEAD's existing diff to the model and compares
+its classification against the commit message that was actually written —
+useful for catching commits made by hand (bypassing `oco-lite`) that forgot a
+💥/`BREAKING CHANGE` flag or used a mismatched type. Read-only: it never
+touches the index or rewrites history, and it exits non-zero when it finds an
+issue, so it works as a CI check or a post-commit/pre-push hook gate.
+
+---
+
 ## Configuration
 
-All configuration is via environment variables — no config file.
+Environment variables take precedence over a config file, which takes
+precedence over built-in defaults.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OCOLITE_MODEL` | `qwen2.5-coder:7b` | Ollama model to use |
-| `OCOLITE_HOST` | `http://localhost:11434` | Ollama API base URL |
+| `OCOLITE_PROVIDER` | `ollama` | `ollama` \| `ollama-cloud` \| `openai` \| `anthropic` — see [Providers](#providers) |
+| `OCOLITE_API_KEY` | *(none)* | required for every provider except local `ollama` |
+| `OCOLITE_MODEL` | provider-dependent | model to use (see [Providers](#providers) for each provider's default) |
+| `OCOLITE_HOST` | provider's standard API base URL | override to point `openai` at a compatible endpoint, or any provider at a proxy |
 | `OCOLITE_MAX_DIFF` | `6000` | Max characters of diff sent per request (larger diffs are truncated) |
-| `OCOLITE_TIMEOUT_MS` | `60000` | Per-request timeout to Ollama, in milliseconds |
-| `OCOLITE_GROUP_MAX_DIFF_PER_FILE` | `1200` | Max characters of *each file's* diff sent in `--group` mode (all staged files are sent together in one request) |
+| `OCOLITE_TIMEOUT_MS` | `60000` | Per-request inactivity timeout, in milliseconds (resets on every streamed chunk) |
+| `OCOLITE_GROUP_MAX_DIFF_PER_FILE` | `1200` | Max characters of *each file's* diff sent during `--split`/`--group` relatedness detection (all staged files are sent together in one request) |
+| `OCOLITE_FALLBACK_MODELS` | *(none)* | comma-separated models to try, in order, on the same provider, if the primary model fails or times out |
 
-Set persistently on Windows (per-user):
+### Config file
+
+Looked up via [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig) under
+the name `oco-lite` — any of `.oco-literc`, `.oco-literc.json`, `.oco-literc.yaml`,
+`.oco-literc.js`, `oco-lite.config.js`, or an `"oco-lite"` key in `package.json`,
+searched upward from the current directory. Lets a team commit shared
+non-secret defaults instead of everyone setting env vars locally.
+
+```json
+{
+  "oco-lite": {
+    "provider": "ollama",
+    "model": "qwen2.5-coder:7b",
+    "maxDiff": 6000,
+    "timeoutMs": 60000,
+    "groupMaxDiffPerFile": 1200,
+    "fallbackModels": ["qwen2.5-coder:1.5b"],
+    "breakingDetection": true
+  }
+}
+```
+
+Keys mirror the env vars above (camelCase, without the `OCOLITE_` prefix).
+**Don't commit an `apiKey` in a config file** — set `OCOLITE_API_KEY` in your
+shell or CI secrets instead; the config file is meant for team-shared,
+non-secret settings only.
+
+Set env vars persistently on Windows (per-user):
 
 ```powershell
 [System.Environment]::SetEnvironmentVariable('OCOLITE_MODEL', 'qwen2.5-coder:7b', 'User')
@@ -324,36 +415,62 @@ Set persistently on Windows (per-user):
 
 ## Why not OpenCommit?
 
-`oco-lite` exists because of two blocking bugs hit while using OpenCommit
-with a local Ollama model:
+[OpenCommit](https://github.com/di-sukharev/opencommit) is a fine, more
+full-featured tool. `oco-lite` is a smaller, more opinionated alternative for
+anyone who wants:
 
-1. **Multi-line commit messages for a single logical change** —
-   `OCO_ONE_LINE_COMMIT=true` and `OCO_DESCRIPTION=false` do not reliably
-   collapse output to one line; this is a known, unresolved upstream issue
-   ([#315](https://github.com/di-sukharev/opencommit/issues/315),
-   [#114](https://github.com/di-sukharev/opencommit/issues/114)) baked into
-   the `conventional-commit` prompt module's template, independent of which
-   model answers it.
-2. **Windows ESM path crash in `@commitlint` mode** — switching
-   `OCO_PROMPT_MODULE=@commitlint` fails with
-   `Only URLs with a scheme in: file, data, and node are supported by the
-   default ESM loader` when trying to `import()` `commitlint.config.js`
-   using a raw `D:\...` path instead of a `file://` URL.
-
-`oco-lite` sidesteps both by owning the full prompt → response → format
-pipeline directly, using structured JSON output from the model rather than
-parsing free text.
+- **Structured JSON output from the model**, not prose-scraping — the
+  commit type, scope, subject, bullet points, and breaking-change flag all
+  come back as explicit fields, parsed directly, rather than extracted from
+  free text with regexes/templates.
+- **A provider-agnostic core from the start** — the same prompt and parsing
+  pipeline runs identically against local Ollama, Ollama Cloud, OpenAI, or
+  Anthropic; switching is one env var, not a different prompt module.
+- **Commit-granularity control** OpenCommit doesn't offer — splitting by
+  file, by diff hunk, or by detected logical grouping across files (see
+  [Which mode should I use?](#which-mode-should-i-use)).
+- **A `--check` mode** to audit commits made by hand against the same
+  breaking-change/type classification, usable as a CI or hook gate.
+- **No prompt-module or config-loading machinery** to configure — `oco-lite`
+  owns the full prompt → response → format pipeline directly.
 
 ---
 
 ## Why not TypeScript?
 
 Deliberately plain JavaScript. Adding TypeScript would mean a build step
-(`tsc`) and shipping compiled output instead of the source file directly —
-more moving parts for a single-file, zero-dependency CLI than it's worth.
-If the model-response parsing ever needs stronger type-checking, JSDoc
-annotations (checkable via `tsc --checkJS`, no build step) are the planned
-next step rather than a full TS rewrite.
+(`tsc`) and shipping compiled output instead of the source files directly —
+more moving parts than it's worth. If the model-response parsing ever needs
+stronger type-checking, JSDoc annotations (checkable via `tsc --checkJS`, no
+build step) are the planned next step rather than a full TS rewrite.
+
+---
+
+## Project structure
+
+```
+oco-lite.mjs              executable entry point — just wires up src/cli.mjs
+src/
+  cli.mjs                 top-level dispatch (which mode to run)
+  cli-args.mjs             parses process.argv into flags
+  config.mjs               env vars + config file → resolved settings (provider, model, host, ...)
+  constants.mjs            gitmoji map, allowed commit types
+  die.mjs                  fail-fast helper
+  git.mjs                  all git plumbing (diff, staged files, hunks, commit, last-commit lookup)
+  prompts.mjs               the two model prompts (single-diff, grouping)
+  parsing.mjs               model JSON → formatted commit message
+  generate.mjs              diff text → generated message (ties prompts/parsing/providers together)
+  ui.mjs                    printHelp, the edit-in-$EDITOR confirmation prompt
+  providers/
+    stream.mjs               shared SSE/NDJSON streaming + timeout handling
+    ollama.mjs, openai.mjs, anthropic.mjs   one per provider's wire format
+    index.mjs                 provider dispatch + model-fallback retry loop
+  modes/
+    single.mjs, split.mjs, group.mjs, split-hunks.mjs, check.mjs   one per CLI mode
+```
+
+No build step — Node runs the `.mjs` files directly, both from a local clone
+and from the published npm package (`src/` is included in `files`).
 
 ---
 
@@ -370,8 +487,9 @@ git push --follow-tags
 Pushing the tag triggers `.github/workflows/publish.yml`, which publishes
 to npm automatically via **Trusted Publishing (OIDC)** — no long-lived
 `NPM_TOKEN` secret involved. `.github/workflows/ci.yml` runs on every push
-and PR: syntax-checks the script, validates `package.json`, and does a dry
-run of `npm pack`.
+and PR: installs dependencies, syntax-checks every module (`npm test`), runs
+a `--help` smoke test (exercises the full import graph), validates
+`package.json`, and does a dry run of `npm pack`.
 
 > First-ever publish only: npm's Trusted Publisher config must point at an
 > *existing* package, so the very first release has to be published
@@ -384,16 +502,22 @@ run of `npm pack`.
 
 **"Cannot reach Ollama at http://localhost:11434"**
 Ollama isn't running. Start it with `ollama serve`, or set `OCOLITE_HOST`
-if it's running elsewhere.
+if it's running elsewhere, or `OCOLITE_PROVIDER=openai`/`anthropic`/`ollama-cloud`
+to use a cloud provider instead.
+
+**"OCOLITE_API_KEY ... is required for provider ..."**
+Set `OCOLITE_API_KEY` for any provider other than local `ollama` (OpenAI,
+Anthropic, and Ollama Cloud all require one).
 
 **Message still splits into multiple commits for one file**
 Use `--split-hunks` instead of the default mode — it separates by logical
 diff hunk rather than relying on the model to compress everything into one
 message.
 
-**Ollama request timed out**
-Increase `OCOLITE_TIMEOUT_MS`, reduce `OCOLITE_MAX_DIFF`, or switch to a
-smaller/faster model via `OCOLITE_MODEL`.
+**Request timed out**
+Increase `OCOLITE_TIMEOUT_MS`, reduce `OCOLITE_MAX_DIFF`, switch to a
+smaller/faster model via `OCOLITE_MODEL`, or set `OCOLITE_FALLBACK_MODELS`
+to retry with a backup model automatically.
 
 **`git commit failed`**
 Usually a pre-commit hook or lint-staged failure unrelated to `oco-lite` —
