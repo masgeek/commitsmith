@@ -10,6 +10,7 @@ export function printHelp() {
 
 Usage:
   oco-lite init                   interactive setup — choose a provider/model and write a config file
+  oco-lite use                    quick-switch to an already-configured provider (no full re-init)
   oco-lite                        print message for all staged changes
   oco-lite --commit               generate + confirm + commit
   oco-lite -y                     generate + commit, no confirmation

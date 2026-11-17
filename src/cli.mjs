@@ -1,8 +1,9 @@
-import { helpRequested, initMode, dryRun, splitHunksMode, groupMode, splitMode, checkMode } from './cli-args.mjs';
+import { helpRequested, initMode, useMode, dryRun, splitHunksMode, groupMode, splitMode, checkMode } from './cli-args.mjs';
 import { printHelp } from './ui.mjs';
 import { assertGitRepo } from './git.mjs';
 import { assertProviderReachable } from './providers/index.mjs';
 import { runInitMode } from './modes/init.mjs';
+import { runUseMode } from './modes/use.mjs';
 import { runSplitHunksMode } from './modes/split-hunks.mjs';
 import { runGroupMode } from './modes/group.mjs';
 import { runSplitMode } from './modes/split.mjs';
@@ -12,6 +13,7 @@ import { runCheckMode } from './modes/check.mjs';
 export async function run() {
   if (helpRequested) return printHelp();
   if (initMode) return runInitMode();
+  if (useMode) return runUseMode();
 
   assertGitRepo();
   await assertProviderReachable();

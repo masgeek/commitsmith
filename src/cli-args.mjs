@@ -2,6 +2,7 @@ import { fileConfig } from './config.mjs';
 
 export const args = process.argv.slice(2);
 export const initMode = args[0] === 'init';
+export const useMode = args[0] === 'use';
 export const shouldCommit = args.includes('--commit') || args.includes('-y');
 export const autoYes = args.includes('-y');
 export const splitMode = args.includes('--split');
