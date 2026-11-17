@@ -497,7 +497,7 @@ Versions are unprefixed (`1.0.0`, not `v1.0.0`) — see `.npmrc`
 (`tag-version-prefix=""`).
 
 ```bash
-npm version patch   # or minor/major — bumps package.json, commits, tags
+pnpm version patch   # or minor/major — bumps package.json, commits, tags
 git push --follow-tags
 ```
 

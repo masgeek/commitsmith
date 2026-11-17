@@ -3,6 +3,7 @@
   "version": "1.0.1",
   "description": "Minimal git commit message generator backed by a local Ollama model or a cloud provider (Ollama Cloud, OpenAI, Anthropic). Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
   "type": "module",
+  "packageManager": "pnpm@12.4.0",
   "bin": {
     "oco-lite": "./oco-lite.mjs"
   },
