@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      packages: write
     concurrency:
       cancel-in-progress: true
       group: bump-version-${{ github.ref }}
