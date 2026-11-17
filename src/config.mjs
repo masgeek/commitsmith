@@ -1,5 +1,6 @@
 import { cosmiconfig } from 'cosmiconfig';
 import { die } from './die.mjs';
+import { getApiKeySecret } from './secrets.mjs';
 
 function parseModelList(value) {
   if (!value) return [];
@@ -7,8 +8,16 @@ function parseModelList(value) {
   return items.map((m) => String(m).trim()).filter(Boolean);
 }
 
-const configResult = await cosmiconfig('oco-lite').search();
+// searchStrategy: 'global' makes the search walk up from cwd to the user's
+// home directory (checking .oco-literc/.json/.yaml/.js and package.json's
+// "oco-lite" key at every level — not just cwd, which is cosmiconfig's
+// default 'none' strategy), then also check the OS-standard global config
+// directory (e.g. %APPDATA%\oco-lite\Config on Windows, ~/.config/oco-lite
+// on Linux) as a final fallback. This is what makes a project-less global
+// config (written by `oco-lite init`) actually get picked up.
+const configResult = await cosmiconfig('oco-lite', { searchStrategy: 'global' }).search();
 export const fileConfig = configResult?.config ?? {};
+export const fileConfigPath = configResult?.filepath ?? null;
 
 export const ALLOWED_PROVIDERS = new Set(['ollama', 'ollama-cloud', 'openai', 'anthropic']);
 export const PROVIDER = (process.env.OCOLITE_PROVIDER || fileConfig.provider || 'ollama').toLowerCase();
@@ -30,7 +39,13 @@ export const DEFAULT_MODELS = {
   anthropic: 'claude-haiku-5-5',
 };
 
-export const API_KEY = process.env.OCOLITE_API_KEY || fileConfig.apiKey || '';
+// Precedence: env var > plaintext in a config file > OS keychain. Skipped
+// entirely for local ollama, which never needs a key — avoids an
+// unnecessary (and on macOS, permission-prompting) keychain lookup.
+export const API_KEY =
+  process.env.OCOLITE_API_KEY ||
+  fileConfig.apiKey ||
+  (PROVIDER !== 'ollama' ? (await getApiKeySecret(PROVIDER)) || '' : '');
 export const MODEL = process.env.OCOLITE_MODEL || fileConfig.model || DEFAULT_MODELS[PROVIDER];
 export const HOST = process.env.OCOLITE_HOST || fileConfig.host || DEFAULT_HOSTS[PROVIDER];
 export const MAX_DIFF = Number(process.env.OCOLITE_MAX_DIFF || fileConfig.maxDiff || 6000);

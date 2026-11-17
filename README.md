@@ -374,17 +374,22 @@ provider, host, and (for cloud providers) an API key, then **fetches that
 provider's actual available models live** and lets you pick one from a list
 instead of guessing a name — falling back to free-text entry if the fetch
 fails (e.g. Ollama isn't running, or the key is wrong). Also asks for a
-breaking-change preference and optional fallback models, then writes a
-project-local `.oco-literc.json`. It never writes an API key to disk — if
-the chosen provider needs one, it prints the right `export`/`$env:` command
-for your shell instead.
+breaking-change preference, optional fallback models, and **where to save**:
+
+- **This project only** (`./.oco-literc.json`) — never stores an API key;
+  meant to be committed and shared with your team.
+- **Your user profile (global)** — writes to the OS-standard per-user config
+  directory (see [Config file](#config-file)), used as a fallback by any
+  project that has no config of its own. Here you can optionally also store
+  the API key itself, since this file is private to you — asked explicitly,
+  off by default.
 
 ```bash
 oco-lite init
 ```
 
 Safe to run before Ollama is reachable, outside a git repo, and right after
-installing. Re-run it any time to overwrite the config (it asks first).
+installing. Re-run it any time to overwrite a config (it asks first).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -400,10 +405,19 @@ installing. Re-run it any time to overwrite the config (it asks first).
 ### Config file
 
 Looked up via [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig) under
-the name `oco-lite` — any of `.oco-literc`, `.oco-literc.json`, `.oco-literc.yaml`,
-`.oco-literc.js`, `oco-lite.config.js`, or an `"oco-lite"` key in `package.json`,
-searched upward from the current directory. Lets a team commit shared
-non-secret defaults instead of everyone setting env vars locally.
+the name `oco-lite`, with `searchStrategy: 'global'` — meaning it checks, in order:
+
+1. `.oco-literc`, `.oco-literc.json`, `.oco-literc.yaml`, `.oco-literc.js`,
+   `oco-lite.config.js`, or an `"oco-lite"` key in `package.json`, in the
+   current directory and every parent directory up to your home directory
+   (a **project config** — the first one found wins)
+2. If none of those exist, the OS-standard per-user config directory as a
+   **global fallback** — `%APPDATA%\oco-lite\Config` on Windows,
+   `~/Library/Preferences/oco-lite` on macOS, `~/.config/oco-lite` on Linux
+   (checking `config.json`, `config.yaml`, `config.js`, etc. there)
+
+`oco-lite init` can write to either location — run it and pick "This project
+only" or "Your user profile (global)".
 
 ```json
 {
@@ -419,10 +433,32 @@ non-secret defaults instead of everyone setting env vars locally.
 }
 ```
 
+(The `"oco-lite"` wrapper key is only for `package.json`; a standalone
+`.oco-literc.json` or the global `config.json` holds those fields directly,
+with no wrapper — that's what `oco-lite init` writes.)
+
 Keys mirror the env vars above (camelCase, without the `OCOLITE_` prefix).
-**Don't commit an `apiKey` in a config file** — set `OCOLITE_API_KEY` in your
-shell or CI secrets instead; the config file is meant for team-shared,
-non-secret settings only.
+
+**Secrets**: a **project** config should never contain an `apiKey` — it's
+meant to be shared/committed, and `oco-lite init` never offers to put one
+there. For the **global** config, `init` offers three ways to handle a
+cloud provider's API key, in order of preference:
+
+1. **OS keychain (recommended)** — Windows Credential Manager, macOS
+   Keychain, or Linux Secret Service, via [`@napi-rs/keyring`](https://github.com/napi-rs/node-rs).
+   Nothing is written to any file; `oco-lite` looks it up by provider name
+   at startup. Falls back to plain text automatically if the OS has no
+   reachable keychain backend (e.g. headless Linux/CI without a Secret
+   Service daemon running).
+2. **Plain text in the global config file** — simplest, but readable by
+   anything with file access. The file is restricted to owner-only
+   read/write where the OS supports it (not meaningfully enforced on
+   Windows, so keep it private yourself there).
+3. **Don't save it** — set `OCOLITE_API_KEY` yourself instead.
+
+Resolution order at runtime is env var → config file's plaintext `apiKey` →
+OS keychain. `OCOLITE_API_KEY` always wins when set, regardless of what's
+stored elsewhere.
 
 Set env vars persistently on Windows (per-user):
 
@@ -477,6 +513,7 @@ src/
   config.mjs               env vars + config file → resolved settings (provider, model, host, ...)
   constants.mjs            gitmoji map, allowed commit types
   die.mjs                  fail-fast helper
+  secrets.mjs              OS keychain read/write for an API key, per provider
   git.mjs                  all git plumbing (diff, staged files, hunks, commit, last-commit lookup)
   prompts.mjs               the two model prompts (single-diff, grouping)
   parsing.mjs               model JSON → formatted commit message
@@ -530,6 +567,13 @@ to use a cloud provider instead.
 **"OCOLITE_API_KEY ... is required for provider ..."**
 Set `OCOLITE_API_KEY` for any provider other than local `ollama` (OpenAI,
 Anthropic, and Ollama Cloud all require one).
+
+**401 Unauthorized despite having configured a key via `oco-lite init`**
+Check whether `OCOLITE_API_KEY` is already set in your shell — the env var
+always takes precedence over a key stored in the OS keychain or a config
+file, so a stale/leftover value there silently overrides anything you just
+configured. `echo $OCOLITE_API_KEY` (bash/zsh) or `echo $env:OCOLITE_API_KEY`
+(PowerShell) to check, and unset it if it's not what you meant to use.
 
 **Message still splits into multiple commits for one file**
 Use `--split-hunks` instead of the default mode — it separates by logical
