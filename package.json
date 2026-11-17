@@ -1,9 +1,15 @@
+
 {
   "name": "@masgeek/oco-lite",
   "version": "1.0.1",
-  "description": "Minimal git commit message generator backed by a local Ollama model or a cloud provider (Ollama Cloud, OpenAI, Anthropic). Single-line, per-file, per-hunk, or grouped-by-related-change commits, with breaking-change detection.",
+  "description": "Minimal AI-powered git commit message generator backed by local Ollama models or cloud providers (Ollama Cloud, OpenAI, Anthropic). Supports single-line, per-file, per-hunk, and grouped-by-related-change commits, with breaking-change detection.",
+  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@12.4.0",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "oco-lite": "./oco-lite.mjs"
   },
@@ -23,19 +29,23 @@
     "commit:check": "node oco-lite.mjs --check",
     "test": "node scripts/check-syntax.mjs"
   },
-  "engines": {
-    "node": ">=18"
+  "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "chalk": "^6.0.1",
+    "cosmiconfig": "^10.0.1",
+    "ora": "^10.0.0"
   },
   "keywords": [
     "git",
     "commit",
     "commit-message",
-    "ollama",
-    "openai",
-    "anthropic",
+    "conventional-commits",
     "ai",
     "cli",
-    "conventional-commits",
+    "ollama",
+    "ollama-cloud",
+    "openai",
+    "anthropic",
     "local-llm"
   ],
   "repository": {
@@ -46,15 +56,7 @@
     "url": "https://github.com/masgeek/oco-lite/issues"
   },
   "homepage": "https://github.com/masgeek/oco-lite#readme",
-  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
-  "license": "MIT",
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "@clack/prompts": "^1.9.0",
-    "chalk": "^6.0.1",
-    "cosmiconfig": "^10.0.1",
-    "ora": "^10.0.0"
   }
 }
