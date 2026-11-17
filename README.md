@@ -237,6 +237,8 @@ classification to audit an existing commit message instead of generating one.
 ## Usage
 
 ```bash
+oco-lite init                    # interactive setup — choose a provider/model, write a config file
+
 git add <files>
 
 oco-lite                        # print a message for all staged changes (no commit)
@@ -365,6 +367,21 @@ issue, so it works as a CI check or a post-commit/pre-push hook gate.
 Environment variables take precedence over a config file, which takes
 precedence over built-in defaults.
 
+### `oco-lite init`
+
+The fastest way to set up a project: an interactive wizard that asks for a
+provider, model, host, breaking-change preference, and optional fallback
+models, then writes a project-local `.oco-literc.json`. It never writes an
+API key to disk — if the chosen provider needs one, it prints the right
+`export`/`$env:` command for your shell instead.
+
+```bash
+oco-lite init
+```
+
+Safe to run before Ollama is reachable, outside a git repo, and right after
+installing. Re-run it any time to overwrite the config (it asks first).
+
 | Variable | Default | Description |
 |---|---|---|
 | `OCOLITE_PROVIDER` | `ollama` | `ollama` \| `ollama-cloud` \| `openai` \| `anthropic` — see [Providers](#providers) |
@@ -466,7 +483,7 @@ src/
     ollama.mjs, openai.mjs, anthropic.mjs   one per provider's wire format
     index.mjs                 provider dispatch + model-fallback retry loop
   modes/
-    single.mjs, split.mjs, group.mjs, split-hunks.mjs, check.mjs   one per CLI mode
+    single.mjs, split.mjs, group.mjs, split-hunks.mjs, check.mjs, init.mjs   one per CLI mode
 ```
 
 No build step — Node runs the `.mjs` files directly, both from a local clone

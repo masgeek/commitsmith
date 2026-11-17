@@ -9,6 +9,7 @@ export function printHelp() {
   console.log(`oco-lite — commit message generator backed by a local or cloud model
 
 Usage:
+  oco-lite init                   interactive setup — choose a provider/model and write a config file
   oco-lite                        print message for all staged changes
   oco-lite --commit               generate + confirm + commit
   oco-lite -y                     generate + commit, no confirmation

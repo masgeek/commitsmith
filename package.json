@@ -51,6 +51,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@clack/prompts": "^1.9.0",
     "chalk": "^6.0.1",
     "cosmiconfig": "^10.0.1",
     "ora": "^10.0.0"

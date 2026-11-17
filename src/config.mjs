@@ -16,14 +16,14 @@ if (!ALLOWED_PROVIDERS.has(PROVIDER)) {
   die(`Unknown OCOLITE_PROVIDER "${PROVIDER}". Supported: ${[...ALLOWED_PROVIDERS].join(', ')}.`);
 }
 
-const DEFAULT_HOSTS = {
+export const DEFAULT_HOSTS = {
   ollama: 'http://localhost:11434',
   'ollama-cloud': 'https://ollama.com',
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
 };
 
-const DEFAULT_MODELS = {
+export const DEFAULT_MODELS = {
   ollama: 'qwen2.5-coder:7b',
   'ollama-cloud': 'qwen3-coder:480b-cloud',
   openai: 'gpt-4o-mini',
