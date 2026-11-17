@@ -356,7 +356,6 @@ function formatCommitMessage(parsed) {
   const subject = subjectRaw.replace(/^["'`]+|["'`]+$/g, '').replace(/\.$/, '');
   const breaking = breakingDetectionEnabled && parsed.breaking === true;
   const breakingReason = typeof parsed.breakingReason === 'string' ? parsed.breakingReason.trim() : '';
-  const breakingIndex = Number.isInteger(parsed.breakingChangeIndex) ? parsed.breakingChangeIndex : -1;
 
   const changes = Array.isArray(parsed.changes)
     ? parsed.changes
@@ -365,9 +364,14 @@ function formatCommitMessage(parsed) {
         .slice(0, 5)
     : [];
 
+  const breakingIndex =
+    Number.isInteger(parsed.breakingChangeIndex) && parsed.breakingChangeIndex < changes.length
+      ? parsed.breakingChangeIndex
+      : -1;
+
   if (!subject) return null;
 
-  const gitmoji = breaking ? BREAKING_GITMOJI : GITMOJI[type] || GITMOJI.chore;
+  const gitmoji = breaking ? BREAKING_GITMOJI : GITMOJI[type];
   const scopePart = scope ? `(${scope})` : '';
   let message = `${gitmoji} ${type}${scopePart}: ${subject}`;
 
