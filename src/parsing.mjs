@@ -40,11 +40,6 @@ export function formatCommitMessage(parsed, breakingDetectionEnabled = true) {
         .slice(0, 5)
     : [];
 
-  const breakingIndex =
-    Number.isInteger(parsed.breakingChangeIndex) && parsed.breakingChangeIndex < changes.length
-      ? parsed.breakingChangeIndex
-      : -1;
-
   if (!subject) return null;
 
   const gitmoji = breaking ? BREAKING_GITMOJI : GITMOJI[type];
@@ -52,24 +47,120 @@ export function formatCommitMessage(parsed, breakingDetectionEnabled = true) {
   let message = `${gitmoji} ${type}${scopePart}: ${subject}`;
 
   if (changes.length > 0) {
-    const bullets = changes.map((change, i) => {
-      const isBreakingBullet = breaking && i === breakingIndex;
-      const suffix = isBreakingBullet && breakingReason ? ` [BREAKING CHANGE: ${breakingReason}]` : '';
-      return `* ${change}${suffix}`;
-    });
+    message += `\n\n${changes.map((change) => `* ${change}`).join('\n')}`;
+  }
 
-    // If the model flagged a breaking change but didn't point at a specific
-    // bullet, append a dedicated breaking-change bullet rather than losing it.
-    if (breaking && breakingReason && breakingIndex < 0) {
-      bullets.push(`* BREAKING CHANGE: ${breakingReason}`);
-    }
-
-    message += `\n\n${bullets.join('\n')}`;
-  } else if (breaking && breakingReason) {
-    message += `\n\n* BREAKING CHANGE: ${breakingReason}`;
+  // Conventional Commits footer: a final "BREAKING CHANGE: <description>"
+  // paragraph, always present for a breaking commit (falls back to the
+  // subject when the model gave no reason) so tools that scan footers see it.
+  if (breaking) {
+    message += `\n\nBREAKING CHANGE: ${breakingReason || subject}`;
   }
 
   return { message, breaking };
+}
+
+/**
+ * Parses the model's `--breaking` review into { breaking, findings[] } where
+ * each finding is { file, what, impact }. Returns null when the response has
+ * no JSON. A breaking verdict with no findings still yields one generic
+ * finding, so a "breaking" result is never silent.
+ */
+export function parseBreakingResult(raw) {
+  const parsed = parseModelJson(raw);
+  if (!parsed) return null;
+  const breaking = parsed.breaking === true;
+  if (!breaking) return { breaking: false, findings: [] };
+
+  const findings = (Array.isArray(parsed.findings) ? parsed.findings : [])
+    .filter((f) => f && typeof f === 'object')
+    .map((f) => ({
+      file: String(f.file ?? '').trim(),
+      what: String(f.what ?? '').trim(),
+      impact: String(f.impact ?? '').trim(),
+    }))
+    .filter((f) => f.what);
+  if (findings.length === 0) {
+    findings.push({ file: '', what: String(parsed.reason ?? '').trim() || 'unspecified breaking change', impact: '' });
+  }
+  return { breaking: true, findings };
+}
+
+/** Combines per-file results: breaking if any is, findings concatenated without duplicates. */
+export function mergeBreakingResults(results) {
+  const seen = new Set();
+  const findings = [];
+  for (const r of results) {
+    for (const f of r.findings) {
+      const key = `${f.file}|${f.what}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push(f);
+    }
+  }
+  return { breaking: results.some((r) => r.breaking), findings };
+}
+
+/** "- subject (first 200 chars of body)" lines for a prompt, from { subject, body }[] commits. */
+export function formatCommitsForPrompt(commits) {
+  return commits
+    .map(({ subject, body }) => {
+      const detail = body.replace(/\s+/g, ' ').slice(0, 200);
+      return detail ? `- ${subject} (${detail})` : `- ${subject}`;
+    })
+    .join('\n');
+}
+
+const cleanList = (value, max) =>
+  (Array.isArray(value) ? value : [])
+    .map((v) => String(v).trim().replace(/^[-*•]\s+/, ''))
+    .filter(Boolean)
+    .slice(0, max);
+
+/**
+ * Parses the model's pull-request response into { title, summary[], testPlan[] }.
+ * Returns null when there is no usable title.
+ */
+export function parsePullRequest(raw) {
+  const parsed = parseModelJson(raw);
+  if (!parsed) return null;
+  const title = String(parsed.title ?? '')
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\.$/, '');
+  if (!title) return null;
+  return { title, summary: cleanList(parsed.summary, 6), testPlan: cleanList(parsed.testPlan, 6) };
+}
+
+/** "BREAKING CHANGE: …" footer lines found in commit messages ({ subject, body }[]), deduplicated. */
+export function extractBreakingNotes(commits) {
+  const notes = new Set();
+  for (const { body = '' } of commits) {
+    for (const m of body.matchAll(/^BREAKING[ -]CHANGE:\s*(.+)$/gim)) notes.add(m[1].trim());
+  }
+  return [...notes];
+}
+
+/** Markdown PR body: Summary, optional Breaking changes, Test plan (as unchecked boxes). */
+export function formatPullRequestBody({ summary, testPlan, breaking = [] }) {
+  const sections = [];
+  if (summary.length > 0) sections.push(`## Summary\n\n${summary.map((s) => `- ${s}`).join('\n')}`);
+  if (breaking.length > 0) sections.push(`## ⚠️ Breaking changes\n\n${breaking.map((b) => `- ${b}`).join('\n')}`);
+  if (testPlan.length > 0) sections.push(`## Test plan\n\n${testPlan.map((t) => `- [ ] ${t}`).join('\n')}`);
+  return sections.join('\n\n');
+}
+
+/** One-line description of what breaks, for a commit's BREAKING CHANGE footer. */
+export function breakingReason(findings) {
+  return findings
+    .slice(0, 3)
+    .map((f) => f.impact || f.what)
+    .join('; ');
+}
+
+/** The "BREAKING CHANGE: …" footer text to paste into a commit message for these findings. */
+export function breakingFooter(findings) {
+  return `BREAKING CHANGE: ${breakingReason(findings)}`;
 }
 
 /** True when a formatted commit message is flagged breaking (leading 💥). */
@@ -82,13 +173,23 @@ export function isBreakingMessage(message) {
  * type and/or breaking flag, swapping the leading gitmoji to match. Leaves the
  * message untouched when its header isn't in "<emoji> type(scope): …" form.
  */
-export function retypeMessage(message, { type, breaking } = {}) {
+export function retypeMessage(message, { type, breaking, breakingReason } = {}) {
   const m = message.match(/^(\S+)\s+(\w+)(\([^)]*\))?:/);
   if (!m) return message;
   const newType = type && ALLOWED_TYPES.has(type) ? type : m[2];
   const isBreaking = breaking ?? m[1] === BREAKING_GITMOJI;
   const gitmoji = isBreaking ? BREAKING_GITMOJI : GITMOJI[newType];
-  return `${gitmoji} ${newType}${m[3] || ''}:${message.slice(m[0].length)}`;
+  let result = `${gitmoji} ${newType}${m[3] || ''}:${message.slice(m[0].length)}`;
+
+  // Keep the "BREAKING CHANGE:" footer in step with the flag.
+  const footerAt = result.search(/\n\nBREAKING CHANGE:/);
+  if (!isBreaking && footerAt !== -1) {
+    result = result.slice(0, footerAt);
+  } else if (isBreaking && footerAt === -1) {
+    const subject = result.split('\n')[0].replace(/^\S+\s+\w+(\([^)]*\))?:\s*/, '');
+    result += `\n\nBREAKING CHANGE: ${breakingReason || subject}`;
+  }
+  return result;
 }
 
 /** Fallback for when the model doesn't return valid JSON: treat first line as the subject. */

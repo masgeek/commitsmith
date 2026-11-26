@@ -12,6 +12,10 @@ export let splitHunksMode = args.includes('--split-hunks');
 export let groupMode = args.includes('--group');
 export let dryRun = args.includes('--dry-run');
 export const checkMode = args.includes('--check');
+export const breakingMode = args.includes('--breaking');
+export const prMode = args.includes('--pr');
+export const prDraft = args.includes('--draft');
+export const prCreate = args.includes('--create');
 export const releaseNotesMode = args.includes('--release-notes');
 
 /** Reads `--name value` or `--name=value` from argv. Null when absent; throws when the value is missing. */
@@ -61,6 +65,9 @@ export const releaseNotesLangs = langRaw
       .map((s) => s.trim())
       .filter(Boolean)
   : [];
+export const prBase = readFlag('--base');
+/** Pull-request-only flags on the command line (to warn when used without --pr). */
+export const prFlagsUsed = ['--base', '--draft', '--create'].filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`)));
 /** Release-notes-only flags on the command line (to warn when used without --release-notes). */
 export const releaseNotesFlagsUsed = ['--from', '--branch', '--max-chars', '--copy', '--output', '--store', '--lang'].filter((f) =>
   args.some((a) => a === f || a.startsWith(`${f}=`))
@@ -75,7 +82,7 @@ export const versionRequested = args.includes('--version') || args.includes('-v'
 // interactive staging prompt (see modes/interactive-stage.mjs), we also ask
 // the user which mode/commit behavior to run, instead of silently defaulting.
 export const bareInvocation =
-  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !releaseNotesMode;
+  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode;
 
 /** Applies the config file's `breakingDetection: false`, once config.mjs's loadConfig() has resolved it. */
 export function applyFileConfigToArgs(fileConfig) {

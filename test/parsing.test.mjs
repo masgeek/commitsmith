@@ -36,7 +36,17 @@ test('formatCommitMessage marks breaking changes when detection is enabled', () 
   );
   assert.equal(result.breaking, true);
   assert.match(result.message, /^💥 /);
-  assert.match(result.message, /BREAKING CHANGE: removes old endpoint/);
+  assert.match(result.message, /\n\nBREAKING CHANGE: removes old endpoint$/); // spec-style final footer
+});
+
+test('formatCommitMessage adds a footer even when the model gives no breaking reason', () => {
+  const result = formatCommitMessage({ type: 'feat', subject: 'rename key', changes: ['renamed it'], breaking: true });
+  assert.match(result.message, /\n\nBREAKING CHANGE: rename key$/);
+  assert.doesNotMatch(result.message, /\* .*BREAKING/);
+});
+
+test('formatCommitMessage has no footer for non-breaking changes', () => {
+  assert.doesNotMatch(formatCommitMessage({ type: 'fix', subject: 'x', breakingReason: 'ignored' }).message, /BREAKING/);
 });
 
 test('formatCommitMessage ignores the breaking flag when detection is disabled', () => {
