@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { die } from './die.mjs';
 
@@ -335,5 +336,64 @@ export function getRemoteUrl(name = 'origin') {
     return execFileSync('git', ['remote', 'get-url', name], GIT_QUIET).trim() || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Non-merge commits as { sha, subject, body }[], newest first. With a base ref
+ * it is baseRef..targetRef; with `null` it is the whole history up to targetRef
+ * (a repo with no tags yet) — used by --bump and --changelog.
+ */
+export function getCommitsDetailed(baseRef, targetRef = 'HEAD') {
+  let out;
+  try {
+    out = execFileSync('git', ['log', '--no-merges', '--format=%H%x1f%s%x1f%b%x1e', baseRef ? `${baseRef}..${targetRef}` : targetRef], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 50,
+    });
+  } catch {
+    die(baseRef ? `Could not read commits between "${baseRef}" and "${targetRef}".` : `Could not read the history of "${targetRef}".`);
+  }
+  return out
+    .split('\x1e')
+    .map((e) => e.trim())
+    .filter(Boolean)
+    .map((e) => {
+      const [sha, subject = '', body = ''] = e.split('\x1f');
+      return { sha: sha.trim(), subject: subject.trim(), body: body.trim() };
+    });
+}
+
+/** Staged diff if anything is staged, else the unstaged diff; null when neither has changes. */
+export function getWorkingDiffPreferStaged() {
+  if (getStagedFiles().length > 0) return { source: 'staged changes', diff: getStagedDiff(null) };
+  const diff = getWorkingTreeDiff();
+  return diff.trim() ? { source: 'unstaged working-tree changes', diff } : null;
+}
+
+/** Absolute path of the repository's hooks directory (honors core.hooksPath and worktrees). */
+export function getHooksDir() {
+  try {
+    return path.resolve(process.cwd(), execFileSync('git', ['rev-parse', '--git-path', 'hooks'], GIT_QUIET).trim());
+  } catch {
+    return die('Could not locate the git hooks directory.');
+  }
+}
+
+/** True when the commit is already contained in a remote-tracking branch (amending it would rewrite published history). */
+export function isCommitPublished(ref = 'HEAD') {
+  try {
+    return execFileSync('git', ['branch', '-r', '--contains', ref], GIT_QUIET).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Rewrites only the message of HEAD (`git commit --amend -m`); the caller must ensure nothing is staged. */
+export function amendCommitMessage(message) {
+  try {
+    execFileSync('git', ['commit', '--amend', '-m', message], { stdio: 'inherit' });
+  } catch {
+    die('git commit --amend failed.');
   }
 }
