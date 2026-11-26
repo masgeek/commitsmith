@@ -108,6 +108,9 @@ Verify:
 commitsmith --help
 ```
 
+The same binary is also installed as `csmith` and `csm`, so any example in this
+README works with the shorter names (e.g. `csm --split -y`).
+
 ### Option B — Local clone, installed globally via pnpm
 
 ```powershell
