@@ -104,6 +104,97 @@ import { splitFileDiffs } from '../src/git.mjs';
 import { buildBreakingPrompt, buildPullRequestPrompt } from '../src/prompts.mjs';
 import { parsePullRequest, extractBreakingNotes, formatPullRequestBody, formatCommitsForPrompt } from '../src/parsing.mjs';
 import { buildPrCreateArgs, buildPrEditArgs, parseOpenPr } from '../src/github.mjs';
+import crypto from 'node:crypto';
+import { buildAppJwt, parseGitHubRemote, resolveBotToken, loadPrivateKey } from '../src/github-auth.mjs';
+import { normalizeUserPath, mergeConfigFile } from '../src/modes/init-github.mjs';
+
+test('loadPrivateKey accepts an RSA .pem and rejects missing, garbage and non-RSA files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oco-key-'));
+  try {
+    const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+    const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256', privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+    fs.writeFileSync(path.join(dir, 'ok.pem'), rsa.privateKey);
+    fs.writeFileSync(path.join(dir, 'ec.pem'), ec.privateKey);
+    fs.writeFileSync(path.join(dir, 'bad.pem'), 'garbage');
+    assert.equal(loadPrivateKey(path.join(dir, 'ok.pem')), rsa.privateKey);
+    assert.throws(() => loadPrivateKey(path.join(dir, 'ec.pem')), /not a valid RSA private key/);
+    assert.throws(() => loadPrivateKey(path.join(dir, 'bad.pem')), /not a valid RSA private key/);
+    assert.throws(() => loadPrivateKey(path.join(dir, 'nope.pem')), /Could not read/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readJsonObject returns {} for missing, invalid and non-object files', async () => {
+  const { readJsonObject } = await import('../src/config.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oco-rj-'));
+  try {
+    const f = path.join(dir, 'c.json');
+    assert.deepEqual(readJsonObject(f), {});
+    fs.writeFileSync(f, '{"a":1}');
+    assert.deepEqual(readJsonObject(f), { a: 1 });
+    fs.writeFileSync(f, 'nope');
+    assert.deepEqual(readJsonObject(f), {});
+    fs.writeFileSync(f, '[1]');
+    assert.deepEqual(readJsonObject(f), {});
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('normalizeUserPath strips quotes, expands ~ and resolves', () => {
+  assert.equal(normalizeUserPath('"C:\\keys\\a.pem"'), path.resolve('C:\\keys\\a.pem'));
+  assert.equal(normalizeUserPath("'/tmp/a.pem'"), path.resolve('/tmp/a.pem'));
+  assert.equal(normalizeUserPath('~/k.pem'), path.join(os.homedir(), 'k.pem'));
+  assert.equal(normalizeUserPath('  rel.pem  '), path.resolve('rel.pem'));
+});
+
+test('mergeConfigFile keeps existing keys, creates missing files, and refuses unreadable ones', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oco-cfg-'));
+  try {
+    const file = path.join(dir, 'sub', 'config.json');
+    mergeConfigFile(file, { githubAppId: '1' });
+    mergeConfigFile(file, { provider: 'ollama', githubAppId: '2' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { githubAppId: '2', provider: 'ollama' });
+    fs.writeFileSync(file, '{ not json');
+    assert.throws(() => mergeConfigFile(file, { a: 1 }), /not valid JSON/);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json'); // left untouched
+    fs.writeFileSync(file, '[1]');
+    assert.throws(() => mergeConfigFile(file, { a: 1 }), /not a JSON object/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildAppJwt produces a verifiable RS256 JWT with the App as issuer', () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  });
+  const jwt = buildAppJwt({ appId: 12345, privateKeyPem: privateKey, now: 1_000_000 });
+  const [h, p, s] = jwt.split('.');
+  assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url')), { alg: 'RS256', typ: 'JWT' });
+  assert.deepEqual(JSON.parse(Buffer.from(p, 'base64url')), { iat: 1_000_000 - 60, exp: 1_000_000 + 540, iss: '12345' });
+  const ok = crypto.createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(s, 'base64url'));
+  assert.equal(ok, true);
+});
+
+test('parseGitHubRemote reads ssh and https remotes', () => {
+  assert.deepEqual(parseGitHubRemote('git@github.com:masgeek/commitsmith.git'), { owner: 'masgeek', repo: 'commitsmith' });
+  assert.deepEqual(parseGitHubRemote('https://github.com/o/r'), { owner: 'o', repo: 'r' });
+  assert.deepEqual(parseGitHubRemote('ssh://git@github.com/o/r.git/'), { owner: 'o', repo: 'r' });
+  assert.equal(parseGitHubRemote('git@gitlab.com:o/r.git'), null);
+});
+
+test('resolveBotToken: a bot token is used as is; missing credentials give a clear error; a bad key path fails cleanly', async () => {
+  assert.equal(await resolveBotToken({ bot: { token: 'tok' }, remoteUrl: '' }), 'tok');
+  await assert.rejects(resolveBotToken({ bot: {}, remoteUrl: '' }), /COMMITSMITH_GH_TOKEN.*COMMITSMITH_GH_APP_ID/s);
+  await assert.rejects(
+    resolveBotToken({ bot: { appId: '1', keyPath: '/definitely/not/here.pem' }, remoteUrl: '' }),
+    /Could not read the GitHub App private key/
+  );
+});
 
 test('parseOpenPr and buildPrEditArgs support updating an existing PR', () => {
   assert.deepEqual(parseOpenPr('[{"url":"https://github.com/o/r/pull/7","number":7}]'), {
