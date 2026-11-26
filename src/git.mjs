@@ -328,3 +328,12 @@ export function isBranchPushed(branch) {
     return false;
   }
 }
+
+/** URL of a remote (default origin), or null when it doesn't exist. */
+export function getRemoteUrl(name = 'origin') {
+  try {
+    return execFileSync('git', ['remote', 'get-url', name], GIT_QUIET).trim() || null;
+  } catch {
+    return null;
+  }
+}

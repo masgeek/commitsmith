@@ -2,6 +2,7 @@ import {
   helpRequested,
   versionRequested,
   initMode,
+  initGithubMode,
   useMode,
   dryRun,
   splitHunksMode,
@@ -24,6 +25,7 @@ import { die } from './die.mjs';
 import { isInteractive } from './tty.mjs';
 import { assertProviderReachable } from './providers/index.mjs';
 import { runInitMode } from './modes/init.mjs';
+import { runInitGithubMode } from './modes/init-github.mjs';
 import { runUseMode } from './modes/use.mjs';
 import { runSplitHunksMode } from './modes/split-hunks.mjs';
 import { runGroupMode } from './modes/group.mjs';
@@ -38,6 +40,7 @@ import { maybeInteractiveStage, maybeInteractivePickRunOptions } from './modes/i
 export async function run() {
   if (helpRequested) return printHelp();
   if (versionRequested) return printVersion();
+  if (initGithubMode) return runInitGithubMode();
   if (initMode) return runInitMode();
   if (useMode) return runUseMode();
 

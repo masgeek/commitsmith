@@ -1,6 +1,18 @@
+import fs from 'node:fs';
 import { cosmiconfig } from 'cosmiconfig';
+import { GLOBAL_CONFIG_PATH } from './global-config.mjs';
 import { die } from './die.mjs';
 import { getApiKeySecret } from './secrets.mjs';
+
+/** Parsed JSON object from a file, or {} when it is missing, unreadable, or not an object. */
+export function readJsonObject(file) {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
 
 function parseModelList(value) {
   if (!value) return [];
@@ -75,6 +87,22 @@ export async function loadConfig() {
     process.env.COMMITSMITH_RELEASE_NOTES_CONTEXT || fileConfig.releaseNotesContext || ''
   ).trim();
 
+  // "Open PRs as a bot": a bot token, or a GitHub App (id + private key file + optional installation id).
+  // The private key itself is never stored here — only the path to the .pem.
+  // cosmiconfig returns only the FIRST config file it finds, so a project
+  // .commitsmithrc.json would hide the machine-specific key path that
+  // `init github` keeps in the global config. Fall back to the global file for
+  // these keys: env var > the found config file > the global config file.
+  const globalFile = readJsonObject(GLOBAL_CONFIG_PATH);
+  const pick = (key) => fileConfig[key] ?? globalFile[key];
+  const GITHUB_BOT = {
+    asDefault: /^(1|true|yes)$/i.test(String(process.env.COMMITSMITH_PR_AS_BOT ?? pick('prAsBot') ?? '')),
+    token: process.env.COMMITSMITH_GH_TOKEN || '',
+    appId: process.env.COMMITSMITH_GH_APP_ID || pick('githubAppId') || '',
+    keyPath: process.env.COMMITSMITH_GH_APP_KEY_PATH || pick('githubAppKeyPath') || '',
+    installationId: process.env.COMMITSMITH_GH_APP_INSTALLATION_ID || pick('githubAppInstallationId') || '',
+  };
+
   cached = {
     fileConfig,
     fileConfigPath,
@@ -87,6 +115,7 @@ export async function loadConfig() {
     GROUP_MAX_DIFF_PER_FILE,
     FALLBACK_MODELS,
     RELEASE_NOTES_CONTEXT,
+    GITHUB_BOT,
   };
   return cached;
 }

@@ -4,6 +4,7 @@ export const args = process.argv.slice(2);
 export const noInteractive = args.includes('--no-interactive');
 export const forceInteractive = args.includes('--interactive');
 export const initMode = args[0] === 'init';
+export const initGithubMode = args[0] === 'init' && args[1] === 'github';
 export const useMode = args[0] === 'use';
 export let shouldCommit = args.includes('--commit') || args.includes('-y');
 export let autoYes = args.includes('-y');
@@ -16,6 +17,7 @@ export const breakingMode = args.includes('--breaking');
 export const prMode = args.includes('--pr');
 export const prDraft = args.includes('--draft');
 export const prCreate = args.includes('--create');
+export const prAsBot = args.includes('--as-bot');
 export const releaseNotesMode = args.includes('--release-notes');
 
 /** Reads `--name value` or `--name=value` from argv. Null when absent; throws when the value is missing. */
@@ -67,7 +69,7 @@ export const releaseNotesLangs = langRaw
   : [];
 export const prBase = readFlag('--base');
 /** Pull-request-only flags on the command line (to warn when used without --pr). */
-export const prFlagsUsed = ['--base', '--draft', '--create'].filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`)));
+export const prFlagsUsed = ['--base', '--draft', '--create', '--as-bot'].filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`)));
 /** Release-notes-only flags on the command line (to warn when used without --release-notes). */
 export const releaseNotesFlagsUsed = ['--from', '--branch', '--max-chars', '--copy', '--output', '--store', '--lang'].filter((f) =>
   args.some((a) => a === f || a.startsWith(`${f}=`))

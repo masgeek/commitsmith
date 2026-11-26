@@ -3,6 +3,7 @@ import { loadConfig } from '../config.mjs';
 import {
   getCurrentBranch,
   getDefaultBranch,
+  getRemoteUrl,
   getReleaseCommits,
   getBranchDiff,
   isBranchPushed,
@@ -11,13 +12,14 @@ import {
   truncateDiff,
 } from '../git.mjs';
 import { checkGh, findOpenPr, createPullRequest, updatePullRequest } from '../github.mjs';
+import { resolveBotToken } from '../github-auth.mjs';
 import { buildPullRequestPrompt } from '../prompts.mjs';
 import { parsePullRequest, extractBreakingNotes, formatPullRequestBody, formatCommitsForPrompt } from '../parsing.mjs';
 import { BREAKING_GITMOJI } from '../constants.mjs';
 import { callModel } from '../providers/index.mjs';
 import { copyToClipboard } from '../clipboard.mjs';
 import { editMessageInEditor } from '../ui.mjs';
-import { prBase, prDraft, prCreate, autoYes, dryRun } from '../cli-args.mjs';
+import { prBase, prDraft, prCreate, prAsBot, autoYes, dryRun } from '../cli-args.mjs';
 import { die } from '../die.mjs';
 
 /** Breaking notes for the PR: commit footers, plus a pointer for any 💥 commit that has none. */
@@ -39,7 +41,7 @@ export function withBreakingPrefix(title, breaking) {
  * network — so cli.mjs can fail fast before the provider check.
  */
 export async function preparePullRequest() {
-  const { MAX_DIFF } = await loadConfig();
+  const { MAX_DIFF, GITHUB_BOT } = await loadConfig();
 
   const head = getCurrentBranch();
   if (!head) die('Detached HEAD: check out the branch you want to open a pull request from.');
@@ -55,13 +57,25 @@ export async function preparePullRequest() {
   const commits = getReleaseCommits(baseRef, 'HEAD');
   if (commits.length === 0) die(`"${head}" has no commits ahead of "${base}" — nothing to open a pull request for.`);
 
+  // "As a bot": resolve the bot's token now (before any model call) so bad credentials fail fast.
+  // It stays in memory and is handed to gh through its environment only.
+  let token = null;
+  if (prAsBot || GITHUB_BOT.asDefault) {
+    try {
+      token = await resolveBotToken({ bot: GITHUB_BOT, remoteUrl: getRemoteUrl('origin') });
+    } catch (err) {
+      die(err.message);
+    }
+  }
+
   // Checked up front (before any model call) so an existing PR is updated, not duplicated.
   // Quietly null when gh is missing; creating will report that properly.
-  const existing = findOpenPr(head);
+  const existing = findOpenPr(head, token);
 
   return {
     head,
     base,
+    token,
     existing,
     commits,
     commitsText: truncateDiff(formatCommitsForPrompt(commits), MAX_DIFF),
@@ -79,8 +93,8 @@ function printPreview({ title, body }) {
  * set, updates that PR's title and description instead. Returns the URL.
  * Exits with a clear message on any failure.
  */
-function openPullRequest({ head, base, title, body, draft, existing }) {
-  const gh = checkGh();
+function openPullRequest({ head, base, title, body, draft, existing, token }) {
+  const gh = checkGh(token);
   if (!gh.ok) die(`${gh.reason}\nNothing was changed; the title and description above are ready to paste.`);
 
   if (!isBranchPushed(head)) {
@@ -90,7 +104,7 @@ function openPullRequest({ head, base, title, body, draft, existing }) {
 
   if (existing) {
     try {
-      updatePullRequest({ number: existing.number, title, body });
+      updatePullRequest({ number: existing.number, title, body, token });
     } catch (err) {
       return die(`gh pr edit failed: ${err.message}`);
     }
@@ -99,7 +113,7 @@ function openPullRequest({ head, base, title, body, draft, existing }) {
   }
 
   try {
-    return createPullRequest({ base, head, title, body, draft });
+    return createPullRequest({ base, head, title, body, draft, token });
   } catch (err) {
     return die(`gh pr create failed: ${err.message}`);
   }
@@ -113,7 +127,7 @@ function openPullRequest({ head, base, title, body, draft, existing }) {
  * regenerate, copy, or cancel. The preview goes to stdout; status to stderr.
  */
 export async function runPullRequestMode(input, { interactive = false } = {}) {
-  const { head, base, existing, commitsText, diff, breaking } = input;
+  const { head, base, token, existing, commitsText, diff, breaking } = input;
 
   async function generate(feedback = '') {
     let raw;
@@ -131,6 +145,7 @@ export async function runPullRequestMode(input, { interactive = false } = {}) {
   }
 
   console.error(`Pull request: ${head} → ${base}`);
+  if (token) console.error("It will be opened as a bot, not as your own GitHub login (the branch push still uses your git credentials).");
   if (existing) {
     console.error(`An open pull request already exists (#${existing.number}): ${existing.url}`);
     console.error('The generated title and description will replace its current ones.');
@@ -143,7 +158,7 @@ export async function runPullRequestMode(input, { interactive = false } = {}) {
   const createNow = (prCreate || autoYes) && !dryRun;
   if (createNow) {
     printPreview(pr);
-    console.log(openPullRequest({ head, base, ...pr, draft: prDraft, existing }));
+    console.log(openPullRequest({ head, base, ...pr, draft: prDraft, existing, token }));
     return;
   }
   if (!interactive) {
@@ -176,7 +191,7 @@ export async function runPullRequestMode(input, { interactive = false } = {}) {
 
     if (choice === 'create' || choice === 'draft') {
       if (dryRun) return console.error('--dry-run: nothing created.');
-      console.log(openPullRequest({ head, base, ...pr, draft: choice === 'draft' || prDraft, existing }));
+      console.log(openPullRequest({ head, base, ...pr, draft: choice === 'draft' || prDraft, existing, token }));
       return;
     }
     if (choice === 'title') {
