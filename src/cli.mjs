@@ -8,6 +8,7 @@ import {
   groupMode,
   splitMode,
   checkMode,
+  breakingMode,
   releaseNotesMode,
   releaseNotesArgErrors,
   releaseNotesFlagsUsed,
@@ -26,7 +27,8 @@ import { runSplitHunksMode } from './modes/split-hunks.mjs';
 import { runGroupMode } from './modes/group.mjs';
 import { runSplitMode } from './modes/split.mjs';
 import { runSingleMode } from './modes/single.mjs';
-import { runCheckMode } from './modes/check.mjs';
+import { runBreakingMode, prepareBreakingInput } from './modes/breaking.mjs';
+import { runCheckMode, prepareCheckRange } from './modes/check.mjs';
 import { prepareReleaseNotes, runReleaseNotesMode } from './modes/release-notes.mjs';
 import { maybeInteractiveStage, maybeInteractivePickRunOptions } from './modes/interactive-stage.mjs';
 
@@ -40,16 +42,23 @@ export async function run() {
   applyFileConfigToArgs(fileConfig);
 
   if (releaseNotesArgErrors.length > 0) die(releaseNotesArgErrors.join('\n'));
-  if (!releaseNotesMode && releaseNotesFlagsUsed.length > 0) {
-    console.warn(`${releaseNotesFlagsUsed.join(', ')} only apply with --release-notes; ignoring.`);
+  // --from/--branch also select the range for `--check` and `--breaking`.
+  const strayFlags = releaseNotesFlagsUsed.filter(
+    (f) => !((checkMode || breakingMode) && (f === '--from' || f === '--branch'))
+  );
+  if (!releaseNotesMode && strayFlags.length > 0) {
+    console.warn(`${strayFlags.join(', ')} only apply with --release-notes; ignoring.`);
   }
 
   assertGitRepo();
   // Validate refs before the (network) provider check so bad input fails fast.
   const releaseNotesInput = releaseNotesMode ? await prepareReleaseNotes({ interactive: isInteractive() }) : null;
+  const checkRange = checkMode ? prepareCheckRange() : null;
+  const breakingInput = breakingMode ? await prepareBreakingInput() : null;
   await assertProviderReachable();
 
-  if (checkMode) return runCheckMode();
+  if (breakingInput) return runBreakingMode(breakingInput);
+  if (checkMode) return runCheckMode(checkRange);
   if (releaseNotesInput) return runReleaseNotesMode(releaseNotesInput, { interactive: isInteractive() });
 
   if (getStagedFiles().length === 0) {

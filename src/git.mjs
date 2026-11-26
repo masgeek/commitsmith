@@ -82,9 +82,22 @@ export function parseFileDiffIntoHunks(fileDiff) {
   return { header, hunks };
 }
 
+/** Splits a multi-file unified diff into one string per file. */
+export function splitFileDiffs(diffText) {
+  return diffText.split(/(?=^diff --git )/m).filter((p) => p.trim().length > 0);
+}
+
 export function getFileDiffs() {
-  const fullDiff = getStagedDiff(null);
-  return fullDiff.split(/(?=^diff --git )/m).filter((p) => p.trim().length > 0);
+  return splitFileDiffs(getStagedDiff(null));
+}
+
+/** Unstaged changes to tracked files (what `git diff` shows) — used by `--breaking` when nothing is staged. */
+export function getWorkingTreeDiff() {
+  try {
+    return execFileSync('git', ['diff', '--no-color'], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 20 });
+  } catch {
+    die('Failed to run `git diff`.');
+  }
 }
 
 export function extractPathFromFileDiff(fileDiff) {
@@ -226,5 +239,39 @@ export function getReleaseNotesDiff(baseRef, targetRef = 'HEAD') {
     );
   } catch {
     die(`Could not get the diff between "${baseRef}" and "${targetRef}". Are both valid refs in this repo?`);
+  }
+}
+
+/** Non-merge commit SHAs in baseRef..targetRef, oldest first — used by `--check --from`. */
+export function listCommitShas(baseRef, targetRef = 'HEAD') {
+  try {
+    return execFileSync('git', ['log', '--no-merges', '--reverse', '--format=%H', `${baseRef}..${targetRef}`], {
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter(Boolean);
+  } catch {
+    die(`Could not list commits between "${baseRef}" and "${targetRef}".`);
+  }
+}
+
+/** Full message of a commit. */
+export function getCommitMessage(sha) {
+  try {
+    return execFileSync('git', ['log', '-1', '--pretty=%B', sha], { encoding: 'utf8' }).trim();
+  } catch {
+    die(`Could not read the message of commit ${sha.slice(0, 7)}.`);
+  }
+}
+
+/** Diff introduced by a single commit (no header). */
+export function getCommitDiff(sha) {
+  try {
+    return execFileSync('git', ['show', '--no-color', '--pretty=format:', sha], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 20,
+    });
+  } catch {
+    die(`Could not read the diff of commit ${sha.slice(0, 7)}.`);
   }
 }

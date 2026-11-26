@@ -28,6 +28,7 @@
     "commit:hunks": "node commitsmith.mjs --split-hunks --commit",
     "commit:group": "node commitsmith.mjs --group --commit",
     "commit:check": "node commitsmith.mjs --check",
+    "breaking": "node commitsmith.mjs --breaking",
     "release-notes": "node commitsmith.mjs --release-notes",
     "test:syntax": "node scripts/check-syntax.mjs",
     "test:unit": "node --test \"test/**/*.test.mjs\"",

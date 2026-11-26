@@ -12,6 +12,7 @@ export let splitHunksMode = args.includes('--split-hunks');
 export let groupMode = args.includes('--group');
 export let dryRun = args.includes('--dry-run');
 export const checkMode = args.includes('--check');
+export const breakingMode = args.includes('--breaking');
 export const releaseNotesMode = args.includes('--release-notes');
 
 /** Reads `--name value` or `--name=value` from argv. Null when absent; throws when the value is missing. */
@@ -75,7 +76,7 @@ export const versionRequested = args.includes('--version') || args.includes('-v'
 // interactive staging prompt (see modes/interactive-stage.mjs), we also ask
 // the user which mode/commit behavior to run, instead of silently defaulting.
 export const bareInvocation =
-  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !releaseNotesMode;
+  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !releaseNotesMode;
 
 /** Applies the config file's `breakingDetection: false`, once config.mjs's loadConfig() has resolved it. */
 export function applyFileConfigToArgs(fileConfig) {

@@ -267,6 +267,7 @@ commitsmith --group -y              # same, no confirmation prompts
 
 commitsmith --split-hunks --dry-run # preview hunks + messages, no staging or commits
 commitsmith --check                 # re-classify HEAD's diff, warn if its message looks inconsistent
+commitsmith --check --from v1.0.0   # scan every commit since a ref (pre-release gate for unflagged breaking changes)
 
 commitsmith --release-notes         # print user-facing notes since the last tag, compared against HEAD
 commitsmith --release-notes --from v1.0.0   # use a specific base ref instead of the last tag
@@ -377,6 +378,43 @@ useful for catching commits made by hand (bypassing `commitsmith`) that forgot a
 💥/`BREAKING CHANGE` flag or used a mismatched type. Read-only: it never
 touches the index or rewrites history, and it exits non-zero when it finds an
 issue, so it works as a CI check or a post-commit/pre-push hook gate.
+
+`commitsmith --check --from <ref> [--branch <ref>]` does the same for **every
+non-merge commit** in `<ref>..HEAD` (or `..<branch>`) — a pre-release gate that
+lists each commit as ✅ or ⚠ and exits non-zero if any breaking change went
+unflagged. It makes one model call per commit and checks at most the newest 50
+(narrow `--from` to cover more).
+
+```bash
+commitsmith --check --from 1.0.0   # everything since the 1.0.0 tag
+```
+
+### `--breaking` (dry run)
+
+`commitsmith --breaking` answers "does this change break anything?" **before**
+you commit. It sends the staged changes (or, if nothing is staged, the
+unstaged working-tree changes) to the model with a prompt focused only on
+breaking changes — removed or renamed CLI flags, env vars, config keys,
+exported functions, routes, schemas, or changed defaults — and prints each
+finding with its impact plus a ready-to-paste `BREAKING CHANGE:` footer. It
+never writes a commit message or touches the index or history.
+
+```bash
+commitsmith --breaking                  # staged (else unstaged) changes
+commitsmith --breaking --from 1.0.0     # everything since a tag, compared against HEAD
+commitsmith --breaking --from 1.0.0 --branch main
+```
+
+The same review runs automatically when commit messages are generated: if the
+message wasn't already flagged, a second, focused breaking-change pass looks at
+the diff (per group in `--group`/`--split`), and a hit gets the 💥 header plus
+the `BREAKING CHANGE:` footer. That costs one extra model call per message;
+`--no-breaking-detection` (or `breakingDetection: false`) turns both off.
+
+Exit code: `1` when breaking changes are found, `2` if part of the answer
+couldn't be parsed (so a gate never passes silently), `0` otherwise — handy as
+a pre-release or CI gate. Lockfiles, tests and `.github/` are ignored for
+ranges. Large diffs are analyzed per file (first 30 files).
 
 ---
 

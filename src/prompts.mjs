@@ -63,6 +63,30 @@ export function buildReleaseNotesPrompt({ commitsText, diff, context = '', maxCh
   ].join('\n');
 }
 
+/** Focused breaking-change review of a diff (no commit message) — used by `--breaking`. */
+export function buildBreakingPrompt(diff) {
+  return [
+    'You review a git diff ONLY for breaking changes. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "breaking": true or false,',
+    '  "findings": [',
+    '    { "file": "path of the changed file", "what": "what changed, e.g. config key maxDiff renamed to maxDiffChars", "impact": "what breaks for existing users/callers, e.g. existing .commitsmithrc files stop applying maxDiff" }',
+    '  ]',
+    '}',
+    '',
+    'Rules:',
+    '- "breaking" is true only if an existing public interface is removed, renamed, or changed incompatibly: exported functions/classes and their signatures, routes/endpoints, CLI commands and flags, environment variables, config keys, file formats, database schemas, or default behavior that existing callers rely on.',
+    '- NOT breaking: new optional parameters/flags/options, new files, internal refactors, bug fixes that keep the interface, docs, tests, formatting.',
+    '- "findings" lists each breaking change (one entry per change); it is empty when "breaking" is false.',
+    '- Keep "what" and "impact" short and concrete. Output ONLY the JSON object.',
+    '',
+    'Diff:',
+    diff,
+  ].join('\n');
+}
+
 /** Translates already-approved release-note bullets; same JSON shape as the original. */
 export function buildTranslationPrompt(notes, language) {
   return [

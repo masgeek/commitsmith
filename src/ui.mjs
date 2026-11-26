@@ -31,6 +31,11 @@ Usage:
   commitsmith --split-hunks --dry-run  preview hunks/messages, no staging or commits
   commitsmith --group [--commit|-y]  same relatedness detection as --split
   commitsmith --check                re-classify HEAD's diff, warn if its message looks inconsistent
+  commitsmith --check --from <ref> [--branch <ref>]
+                                   scan every commit in the range (e.g. since a tag); exit 1 if any looks off
+  commitsmith --breaking [--from <ref> [--branch <ref>]]
+                                   dry run: detect breaking changes in staged (else unstaged) changes or a range,
+                                   print findings + a BREAKING CHANGE footer; exit 1 if any, writes nothing
   commitsmith --release-notes [--from <ref>] [--branch <ref>] [--max-chars <n>] [--copy]
                                    print user-facing release notes (bullets on stdout)
                                    base = --from or last tag reachable from the target; target = HEAD or --branch
@@ -93,7 +98,7 @@ export async function confirmWithEdit(question, message, { regenerate } = {}) {
     return { proceed: false, message };
   }
 
-  const prompt = question.replace(/s*[y/N/e]s*$/i, '').trim();
+  const prompt = question.replace(/\s*\[y\/N\/e\]\s*$/i, '').trim();
   let current = message;
 
   for (;;) {
@@ -119,12 +124,17 @@ export async function confirmWithEdit(question, message, { regenerate } = {}) {
       const type = await clack.select({
         message: 'Commit type',
         options: [...ALLOWED_TYPES].map((t) => ({ value: t, label: t })),
-        initialValue: current.match(/^S+s+(w+)/)?.[1],
+        initialValue: current.match(/^\S+\s+(\w+)/)?.[1],
       });
       if (clack.isCancel(type)) continue;
       const breaking = await clack.confirm({ message: 'Mark as BREAKING CHANGE?', initialValue: isBreakingMessage(current) });
       if (clack.isCancel(breaking)) continue;
-      current = retypeMessage(current, { type, breaking });
+      let breakingReason = '';
+      if (breaking && !/\n\nBREAKING CHANGE:/.test(current)) {
+        const reason = await clack.text({ message: 'What breaks? (goes in the BREAKING CHANGE footer)', placeholder: 'e.g. config key maxDiff renamed to maxDiffChars' });
+        if (!clack.isCancel(reason)) breakingReason = reason.trim();
+      }
+      current = retypeMessage(current, { type, breaking, breakingReason });
     } else {
       let feedback = '';
       if (choice === 'regen-note') {
