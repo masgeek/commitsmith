@@ -417,6 +417,47 @@ commitsmith --pr --base develop      # compare against / target another base (de
   and its title and description are replaced (draft state is kept).
 - Preview goes to stdout, status to stderr; `--create` prints the PR URL.
 
+**Open it as a bot (`--as-bot`).** By default `gh` acts as your own login. With
+`--as-bot` (or `COMMITSMITH_PR_AS_BOT=1` / `"prAsBot": true` in config) the PR
+is created and updated as a bot identity instead — handy when branch protection
+needs a reviewer other than the author. The branch push still uses your own git
+credentials.
+
+**Guided setup (recommended): `commitsmith init github`.** It prints the steps
+to create the GitHub App (permissions: Pull requests read/write, Contents
+read-only; webhook off), install it on your repo and generate its private key
+(`.pem` file), then asks for the App ID and the key file (drag it into the
+terminal). It checks the pair against GitHub — including that the App is
+installed on the current repo — and saves the settings the way `init` does for
+AI providers:
+
+- `githubAppKeyPath` always goes in your **global** config (it's machine-specific),
+  and you can have the key file copied into commitsmith's config folder
+  (`github-app.pem`, owner-only permissions where the OS supports it) instead of
+  leaving it where it downloaded.
+- `githubAppId`, optional `githubAppInstallationId` and `prAsBot` go in your global
+  config, or in the project's `.commitsmithrc.json` (no secrets or paths, safe to
+  commit). Existing keys in those files are kept, not overwritten.
+- The private key's contents are never written into any config file.
+
+The key path is found even when a project config exists: bot settings fall back
+to the global config file. Or skip the wizard and provide one of:
+
+| Credentials | Variables |
+|---|---|
+| A bot account's token (e.g. a fine-grained PAT with **Pull requests: write** on the repo) | `COMMITSMITH_GH_TOKEN` |
+| A GitHub App installed on the repo (needs **Pull requests: write**, **Contents: read**) | `COMMITSMITH_GH_APP_ID` (App ID or client ID), `COMMITSMITH_GH_APP_KEY_PATH` (path to the `.pem` private key); optional `COMMITSMITH_GH_APP_INSTALLATION_ID` |
+
+For an App, `commitsmith` signs a short-lived JWT with the key and exchanges it
+for an installation token (valid about an hour) each run; the installation is
+looked up from the `origin` remote unless you give its ID. The token is kept in
+memory only and handed to `gh` through its environment — never written to disk,
+printed, or put on a command line. Store the `.pem` somewhere private (generate
+one under the App's settings; GitHub never shows an existing key again). The
+App ID, key path and installation ID can also go in your config as
+`githubAppId`, `githubAppKeyPath`, `githubAppInstallationId`; a token must stay in
+the environment.
+
 ### `--breaking` (dry run)
 
 `commitsmith --breaking` answers "does this change break anything?" **before**

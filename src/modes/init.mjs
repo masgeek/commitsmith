@@ -176,5 +176,5 @@ export async function runInitMode() {
   }
 
   clack.note(notes.join('\n'), 'Done');
-  clack.outro('Run `commitsmith --help` to see all commands.');
+  clack.outro('Run `commitsmith --help` to see all commands. To open PRs as a GitHub App bot: `commitsmith init github`.');
 }
