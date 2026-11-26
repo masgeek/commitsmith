@@ -25,6 +25,8 @@ export const bumpApply = args.includes('--apply');
 export const bumpTag = args.includes('--tag');
 export const changelogMode = args.includes('--changelog');
 export const changelogAll = args.includes('--all');
+export const changelogUnreleasedOnly = args.includes('--unreleased');
+export const changelogRebuild = args.includes('--rebuild');
 export const hookMode = args[0] === 'hook';
 export const hookAction = hookMode ? (args[1] ?? 'status') : null;
 export const hookPrePush = args.includes('--pre-push');
@@ -94,7 +96,7 @@ export const failOn = ['high', 'medium', 'low'].includes(failOnRaw) ? failOnRaw 
 /** Flags that only make sense with one mode, as [mode flag, [its flags]] — cli.mjs warns when they appear alone. */
 export const scopedFlagGroups = [
   ['--bump', ['--apply', '--tag'], bumpMode],
-  ['--changelog', ['--all', '--release-version'], changelogMode],
+  ['--changelog', ['--all', '--release-version', '--unreleased', '--rebuild'], changelogMode],
   ['hook', ['--pre-push'], hookMode],
   ['hook or --amend', ['--force'], hookMode || amendMode],
   ['--review', ['--fail-on'], reviewMode],
@@ -107,7 +109,8 @@ export const releaseNotesFlagsUsed = ['--from', '--branch', '--max-chars', '--co
 );
 export const noGroupDetection = args.includes('--no-group-detection');
 export let breakingDetectionEnabled = !args.includes('--no-breaking-detection');
-export const helpRequested = args.includes('--help') || args.includes('-h');
+export const helpCommand = args[0] === 'help';
+export const helpRequested =args.includes('--help') || args.includes('-h');
 export const versionRequested = args.includes('--version') || args.includes('-v');
 
 // True when nothing on the command line selects a mode or commit behavior —

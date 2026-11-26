@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { die } from './die.mjs';
+import { sortVersionTags } from './conventional.mjs';
 
 export function assertGitRepo() {
   try {
@@ -395,5 +396,41 @@ export function amendCommitMessage(message) {
     execFileSync('git', ['commit', '--amend', '-m', message], { stdio: 'inherit' });
   } catch {
     die('git commit --amend failed.');
+  }
+}
+
+/**
+ * Semver tags reachable from `targetRef`, newest version first, as
+ * { tag, version, date } (date = the tag's creation date, YYYY-MM-DD).
+ * Non-semver tags are ignored.
+ */
+export function listVersionTags(targetRef = 'HEAD') {
+  let out;
+  try {
+    out = execFileSync('git', ['for-each-ref', `--merged=${targetRef}`, '--format=%(refname:short)%09%(creatordate:short)', 'refs/tags'], GIT_QUIET);
+  } catch {
+    return [];
+  }
+  return sortVersionTags(
+    out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [tag, date = ''] = line.split('\t');
+        return { tag, date };
+      })
+  );
+}
+
+/** True when `ancestor` is reachable from `descendant` (and they are different commits). */
+export function isStrictAncestor(ancestor, descendant) {
+  const a = resolveCommit(ancestor);
+  const d = resolveCommit(descendant);
+  if (!a || !d || a === d) return false;
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', a, d], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
   }
 }

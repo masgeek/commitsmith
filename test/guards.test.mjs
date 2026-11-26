@@ -12,7 +12,11 @@ import {
   bumpVersion,
   parseVersionTag,
   formatChangelogSection,
-  insertChangelogSection,
+  compareVersions,
+  sortVersionTags,
+  buildReleaseRanges,
+  renderChangelog,
+  mergeChangelogSections,
   lintCommitMessage,
 } from '../src/conventional.mjs';
 import { setPackageVersion, readPackageVersion } from '../src/modes/bump.mjs';
@@ -181,22 +185,80 @@ test('formatChangelogSection: breaking first, grouped by type, noise hidden unle
   assert.match(formatChangelogSection({ version: null, date: 'd', commits: [] }), /^## \[Unreleased\]\n\n_No notable changes\._$/);
 });
 
-test('insertChangelogSection: creates, prepends above the newest release, replaces the same version, keeps CRLF', () => {
-  const sec1 = '## [1.1.0] - 2026-02-01\n\n### ✨ Features\n\n- a';
-  const created = insertChangelogSection('', sec1);
-  assert.match(created, /^# Changelog\n\nAll notable changes[^\n]*\n\n## \[1\.1\.0\]/);
+test('compareVersions / sortVersionTags: numeric order, semver tags only, one per version', () => {
+  assert.ok(compareVersions('1.10.0', '1.9.0') > 0);
+  assert.ok(compareVersions('1.0.4', '1.0.10') < 0);
+  assert.equal(compareVersions('2.0.0', '2.0.0'), 0);
+  const sorted = sortVersionTags([
+    { tag: '1.0.2', date: 'd' },
+    { tag: 'v1.0.2', date: 'dup' },
+    { tag: 'nightly', date: 'x' },
+    { tag: '1.10.0', date: 'd' },
+    { tag: '1.0.10', date: 'd' },
+  ]);
+  assert.deepEqual(sorted.map((t) => t.tag), ['1.10.0', '1.0.10', '1.0.2']);
+});
 
-  const sec2 = '## [1.2.0] - 2026-03-01\n\n- b';
-  const prepended = insertChangelogSection(created, sec2);
-  assert.ok(prepended.indexOf('[1.2.0]') < prepended.indexOf('[1.1.0]'));
+test('buildReleaseRanges: each tag runs from the next older tag; the oldest from --from or the start', () => {
+  const tags = [{ tag: '1.2.0' }, { tag: '1.1.0' }, { tag: '1.0.0' }];
+  assert.deepEqual(buildReleaseRanges(tags).map((r) => [r.tag, r.base]), [['1.2.0', '1.1.0'], ['1.1.0', '1.0.0'], ['1.0.0', null]]);
+  assert.equal(buildReleaseRanges(tags, 'abc123').at(-1).base, 'abc123');
+  assert.deepEqual(buildReleaseRanges([]), []);
+});
 
-  const replaced = insertChangelogSection(prepended, '## [1.2.0] - 2026-03-05\n\n- b2');
-  assert.equal(replaced.match(/## \[1\.2\.0\]/g).length, 1);
-  assert.match(replaced, /- b2/);
-  assert.doesNotMatch(replaced, /- b\n/);
-  assert.match(replaced, /## \[1\.1\.0\]/);
+const sec = (version, body, unreleased = false) => ({
+  version,
+  unreleased,
+  markdown: version ? '## [' + version + '] - 2026-01-01\n\n' + body : '## [Unreleased]\n\n' + body,
+});
 
-  const crlf = insertChangelogSection(created.replace(/\n/g, '\r\n'), sec2);
+test('renderChangelog / mergeChangelogSections: a new file gets the title, Unreleased first, releases newest to oldest', () => {
+  const sections = [sec(null, '- u', true), sec('1.1.0', '- b'), sec('1.0.0', '- a')];
+  const created = mergeChangelogSections('', sections);
+  assert.equal(created, renderChangelog(sections));
+  assert.match(created, /^# Changelog\n\nAll notable changes[^\n]*\n\n## \[Unreleased\]\n\n- u\n\n## \[1\.1\.0\][^\n]*\n\n- b\n\n## \[1\.0\.0\]/);
+});
+
+test('mergeChangelogSections: refreshes Unreleased, keeps written releases, inserts missing ones in order', () => {
+  const existing = [
+    '# Changelog',
+    '',
+    'Hand-written intro.',
+    '',
+    '## [Unreleased]',
+    '',
+    '- old unreleased',
+    '',
+    '## [1.2.0] - 2026-03-01',
+    '',
+    '- hand edited 1.2.0',
+    '',
+    '## [1.0.0] - 2026-01-01',
+    '',
+    '- hand edited 1.0.0',
+    '',
+  ].join('\n');
+  const merged = mergeChangelogSections(existing, [sec(null, '- new unreleased', true), sec('1.2.0', '- regenerated'), sec('1.1.0', '- fresh 1.1.0'), sec('1.0.0', '- regenerated')]);
+
+  assert.match(merged, /Hand-written intro\./);
+  assert.match(merged, /- new unreleased/);
+  assert.doesNotMatch(merged, /old unreleased/);
+  assert.match(merged, /hand edited 1\.2\.0/); // untouched
+  assert.match(merged, /hand edited 1\.0\.0/);
+  assert.doesNotMatch(merged, /regenerated/);
+  const order = ['[Unreleased]', '[1.2.0]', '[1.1.0]', '[1.0.0]'].map((h) => merged.indexOf(h));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.ok(order.every((i) => i >= 0));
+});
+
+test('mergeChangelogSections: a labelled release replaces [Unreleased]; new releases go on top; CRLF is kept', () => {
+  const existing = '# Changelog\n\n## [Unreleased]\n\n- pending\n\n## [1.0.0] - 2026-01-01\n\n- a\n';
+  const merged = mergeChangelogSections(existing, [sec('1.1.0', '- released now', true)]);
+  assert.doesNotMatch(merged, /Unreleased/);
+  assert.ok(merged.indexOf('[1.1.0]') < merged.indexOf('[1.0.0]'));
+  assert.match(merged, /- a/);
+
+  const crlf = mergeChangelogSections(existing.replace(/\n/g, '\r\n'), [sec(null, '- u', true)]);
   assert.ok(crlf.includes('\r\n') && !/[^\r]\n/.test(crlf));
 });
 

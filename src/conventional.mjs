@@ -149,37 +149,90 @@ export function formatChangelogSection({ version, date, commits, all = false }) 
   return lines.join('\n');
 }
 
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Compares two "X.Y.Z" versions numerically: negative when a < b. Non-semver input compares as equal. */
+export function compareVersions(a, b) {
+  const pa = String(a).match(/^(\d+)\.(\d+)\.(\d+)/);
+  const pb = String(b).match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!pa || !pb) return 0;
+  for (let i = 1; i <= 3; i++) {
+    if (Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) - Number(pb[i]);
+  }
+  return 0;
+}
+
+/**
+ * Newest-first release list from { tag, date }[] — semver tags only, sorted by
+ * version, one entry per version (so "1.2.0" and "v1.2.0" don't both appear).
+ */
+export function sortVersionTags(tags) {
+  const seen = new Set();
+  return tags
+    .map((t) => ({ ...t, version: parseVersionTag(t.tag)?.version }))
+    .filter((t) => t.version && !seen.has(t.version) && seen.add(t.version))
+    .sort((a, b) => compareVersions(b.version, a.version));
+}
+
+/**
+ * Commit range for every release in a newest-first tag list: each tag's
+ * changes are everything since the next older tag. The oldest one starts at
+ * `oldestBase` (the --from ref), or the start of history when null.
+ */
+export function buildReleaseRanges(tags, oldestBase = null) {
+  return tags.map((t, i) => ({ ...t, base: i + 1 < tags.length ? tags[i + 1].tag : oldestBase }));
+}
 
 const CHANGELOG_HEADER = '# Changelog\n\nAll notable changes to this project are documented in this file.\n';
 
+/** A whole changelog from sections ({ version, markdown }[], newest first), with the title. */
+export function renderChangelog(sections) {
+  return CHANGELOG_HEADER + '\n' + sections.map((s) => s.markdown).join('\n\n') + '\n';
+}
+
+const blockKey = (heading) => {
+  const m = heading.match(/^## \[([^\]]+)\]/);
+  if (!m) return null;
+  return /^unreleased$/i.test(m[1]) ? 'unreleased' : m[1];
+};
+
 /**
- * Puts `section` into CHANGELOG text: a new file gets a title; an existing
- * section for the same version is replaced; otherwise the section goes above
- * the newest existing release. CRLF files stay CRLF.
+ * Merges generated sections ({ version, markdown, unreleased }[], newest
+ * first) into an existing CHANGELOG without clobbering it:
+ *  - the Unreleased section is refreshed (or added at the top); when it is
+ *    labelled with a version (--release-version) it replaces [Unreleased];
+ *  - a release that is already in the file is left exactly as written;
+ *  - a release that is missing is inserted where its version belongs.
+ * Text before the first release (title, intro) is preserved, and CRLF files stay CRLF.
  */
-export function insertChangelogSection(existing, section) {
+export function mergeChangelogSections(existing, sections) {
   const crlf = typeof existing === 'string' && existing.includes('\r\n');
   const text = (existing ?? '').replace(/\r\n/g, '\n');
-  const heading = section.split('\n')[0];
+  if (!text.trim()) return renderChangelog(sections);
 
-  let result;
-  if (!text.trim()) {
-    result = `${CHANGELOG_HEADER}\n${section}\n`;
-  } else {
-    const same = new RegExp(`^${escapeRegExp(heading.replace(/ - .*$/, ''))}(?: - .*)?$`, 'm').exec(text);
-    if (same) {
-      const start = same.index;
-      const next = text.indexOf('\n## ', start + 1);
-      result = next === -1 ? `${text.slice(0, start)}${section}\n` : `${text.slice(0, start)}${section}\n\n${text.slice(next + 1)}`;
-    } else {
-      const firstRelease = text.search(/^## /m);
-      result =
-        firstRelease === -1
-          ? `${text.replace(/\n*$/, '\n')}\n${section}\n`
-          : `${text.slice(0, firstRelease)}${section}\n\n${text.slice(firstRelease)}`;
+  const parts = text.split(/^(?=## )/m);
+  const preamble = parts[0].startsWith('## ') ? '' : parts.shift();
+  const blocks = parts.map((p) => ({ key: blockKey(p.split('\n')[0]), text: p.replace(/\s+$/, '') }));
+
+  for (const s of sections) {
+    const md = s.markdown.replace(/\s+$/, '');
+    if (s.unreleased) {
+      const labelled = Boolean(s.version);
+      const key = labelled ? s.version : 'unreleased';
+      if (labelled) {
+        const old = blocks.findIndex((b) => b.key === 'unreleased');
+        if (old !== -1) blocks.splice(old, 1);
+      }
+      const at = blocks.findIndex((b) => b.key === key);
+      if (at !== -1) blocks[at] = { key, text: md };
+      else blocks.unshift({ key, text: md });
+      continue;
     }
+    if (blocks.some((b) => b.key === s.version)) continue; // already written — keep manual edits
+    const before = blocks.findIndex((b) => b.key && b.key !== 'unreleased' && compareVersions(b.key, s.version) < 0);
+    blocks.splice(before === -1 ? blocks.length : before, 0, { key: s.version, text: md });
   }
+
+  const body = blocks.map((b) => b.text).join('\n\n');
+  const result = preamble.trim() ? preamble.replace(/\s+$/, '') + '\n\n' + body + '\n' : body + '\n';
   return crlf ? result.replace(/\n/g, '\r\n') : result;
 }
 
