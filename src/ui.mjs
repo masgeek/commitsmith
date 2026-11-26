@@ -36,6 +36,9 @@ Usage:
   commitsmith --breaking [--from <ref> [--branch <ref>]]
                                    dry run: detect breaking changes in staged (else unstaged) changes or a range,
                                    print findings + a BREAKING CHANGE footer; exit 1 if any, writes nothing
+  commitsmith --pr [--base <branch>] [--create|-y] [--draft]
+                                   generate a PR title + description from the branch's commits (breaking changes
+                                   included); preview by default, --create pushes the branch and opens it via gh
   commitsmith --release-notes [--from <ref>] [--branch <ref>] [--max-chars <n>] [--copy]
                                    print user-facing release notes (bullets on stdout)
                                    base = --from or last tag reachable from the target; target = HEAD or --branch

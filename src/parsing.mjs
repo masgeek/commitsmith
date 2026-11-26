@@ -101,6 +101,55 @@ export function mergeBreakingResults(results) {
   return { breaking: results.some((r) => r.breaking), findings };
 }
 
+/** "- subject (first 200 chars of body)" lines for a prompt, from { subject, body }[] commits. */
+export function formatCommitsForPrompt(commits) {
+  return commits
+    .map(({ subject, body }) => {
+      const detail = body.replace(/\s+/g, ' ').slice(0, 200);
+      return detail ? `- ${subject} (${detail})` : `- ${subject}`;
+    })
+    .join('\n');
+}
+
+const cleanList = (value, max) =>
+  (Array.isArray(value) ? value : [])
+    .map((v) => String(v).trim().replace(/^[-*•]\s+/, ''))
+    .filter(Boolean)
+    .slice(0, max);
+
+/**
+ * Parses the model's pull-request response into { title, summary[], testPlan[] }.
+ * Returns null when there is no usable title.
+ */
+export function parsePullRequest(raw) {
+  const parsed = parseModelJson(raw);
+  if (!parsed) return null;
+  const title = String(parsed.title ?? '')
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\.$/, '');
+  if (!title) return null;
+  return { title, summary: cleanList(parsed.summary, 6), testPlan: cleanList(parsed.testPlan, 6) };
+}
+
+/** "BREAKING CHANGE: …" footer lines found in commit messages ({ subject, body }[]), deduplicated. */
+export function extractBreakingNotes(commits) {
+  const notes = new Set();
+  for (const { body = '' } of commits) {
+    for (const m of body.matchAll(/^BREAKING[ -]CHANGE:\s*(.+)$/gim)) notes.add(m[1].trim());
+  }
+  return [...notes];
+}
+
+/** Markdown PR body: Summary, optional Breaking changes, Test plan (as unchecked boxes). */
+export function formatPullRequestBody({ summary, testPlan, breaking = [] }) {
+  const sections = [];
+  if (summary.length > 0) sections.push(`## Summary\n\n${summary.map((s) => `- ${s}`).join('\n')}`);
+  if (breaking.length > 0) sections.push(`## ⚠️ Breaking changes\n\n${breaking.map((b) => `- ${b}`).join('\n')}`);
+  if (testPlan.length > 0) sections.push(`## Test plan\n\n${testPlan.map((t) => `- [ ] ${t}`).join('\n')}`);
+  return sections.join('\n\n');
+}
+
 /** One-line description of what breaks, for a commit's BREAKING CHANGE footer. */
 export function breakingReason(findings) {
   return findings

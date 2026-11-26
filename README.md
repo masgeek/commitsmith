@@ -389,6 +389,34 @@ unflagged. It makes one model call per commit and checks at most the newest 50
 commitsmith --check --from 1.0.0   # everything since the 1.0.0 tag
 ```
 
+### `--pr` (pull requests)
+
+`commitsmith --pr` writes a pull request title and description for the current
+branch from its commits and diff against the base branch, then — only when you
+ask — pushes the branch and opens the PR through the [GitHub CLI](https://cli.github.com)
+(`gh`, logged in via `gh auth login`).
+
+```bash
+commitsmith --pr                     # preview the title + description (nothing pushed or created)
+commitsmith --pr --create            # push the branch if needed and open the PR (-y does the same)
+commitsmith --pr --create --draft    # open it as a draft
+commitsmith --pr --base develop      # compare against / target another base (default: origin's default branch)
+```
+
+- The description has **Summary**, **Breaking changes** and **Test plan** (unchecked
+  boxes) sections. Breaking changes are lifted from the commits'
+  `BREAKING CHANGE:` footers, not guessed again, and the title gets a leading 💥.
+- In a terminal you get a menu: create, create as draft, edit the title, edit the
+  description in `$EDITOR`, regenerate (optionally with an instruction), copy, or
+  cancel. Without a terminal, `--pr` only previews unless you pass `--create`.
+- It never force-pushes and refuses to run on the base branch or a branch with no
+  commits ahead.
+- If a PR is **already open** for the branch (checked before anything is
+  generated), it is updated instead of duplicated: the menu offers "Update pull
+  request #N", `--create`/`-y` update it directly, new commits are pushed first,
+  and its title and description are replaced (draft state is kept).
+- Preview goes to stdout, status to stderr; `--create` prints the PR URL.
+
 ### `--breaking` (dry run)
 
 `commitsmith --breaking` answers "does this change break anything?" **before**

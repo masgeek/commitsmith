@@ -275,3 +275,56 @@ export function getCommitDiff(sha) {
     die(`Could not read the diff of commit ${sha.slice(0, 7)}.`);
   }
 }
+
+/** Current branch name, or null on a detached HEAD. */
+export function getCurrentBranch() {
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', '-q', 'HEAD'], GIT_QUIET).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The remote's default branch (from origin/HEAD), else the first of main/master/develop that exists locally. */
+export function getDefaultBranch() {
+  try {
+    const ref = execFileSync('git', ['symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'], GIT_QUIET).trim();
+    if (ref) return ref.replace(/^origin\//, '');
+  } catch {
+    // no origin/HEAD — fall through to local guesses
+  }
+  return ['main', 'master', 'develop'].find((b) => resolveCommit(`refs/heads/${b}`)) ?? null;
+}
+
+/** Diff the target added since diverging from base, minus lockfiles only (tests/CI matter in a PR). */
+export function getBranchDiff(baseRef, targetRef = 'HEAD') {
+  const lockExcludes = ['**/*.lock', '**/package-lock.json', '**/pnpm-lock.yaml'].map((p) => `:(exclude,glob)${p}`);
+  try {
+    return execFileSync('git', ['diff', '--no-color', `${baseRef}...${targetRef}`, '--', '.', ...lockExcludes], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 20,
+    });
+  } catch {
+    die(`Could not get the diff between "${baseRef}" and "${targetRef}". Are both valid refs in this repo?`);
+  }
+}
+
+/** Pushes a branch to origin, setting upstream. Never forces. */
+export function pushBranch(branch) {
+  try {
+    execFileSync('git', ['push', '-u', 'origin', branch], { stdio: 'inherit' });
+  } catch {
+    die(`git push failed for "${branch}".`);
+  }
+}
+
+/** True when the branch has an upstream and nothing local is unpushed. */
+export function isBranchPushed(branch) {
+  try {
+    const upstream = execFileSync('git', ['rev-parse', '--abbrev-ref', `${branch}@{u}`], GIT_QUIET).trim();
+    if (!upstream) return false;
+    return execFileSync('git', ['rev-list', '--count', `${upstream}..${branch}`], GIT_QUIET).trim() === '0';
+  } catch {
+    return false;
+  }
+}

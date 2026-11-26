@@ -63,6 +63,33 @@ export function buildReleaseNotesPrompt({ commitsText, diff, context = '', maxCh
   ].join('\n');
 }
 
+/** Pull-request title + description from a branch's commits and diff — used by `--pr`. */
+export function buildPullRequestPrompt({ commitsText, diff, feedback = '' }) {
+  return [
+    'You write a GitHub pull request title and description for a branch, from its commits and code diff. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "title": "conventional-commit style title: type(scope): subject, imperative, under 72 chars, no emoji",',
+    '  "summary": ["2-5 short bullets: what changed and why, for a reviewer"],',
+    '  "testPlan": ["1-5 short, concrete steps a reviewer can run to verify the change"]',
+    '}',
+    '',
+    'Rules:',
+    '- Describe the branch as ONE coherent change; do not just list commits.',
+    '- Be specific and concrete (flags, files, behaviors), not generic.',
+    '- Do not mention breaking changes here; they are added separately from the commit messages.',
+    '- Output ONLY the JSON object.',
+    ...(feedback ? ['', `Additional instruction from the user (follow it): ${feedback}`] : []),
+    '',
+    'Commits:',
+    commitsText || '(none)',
+    '',
+    'Code diff (lockfiles excluded):',
+    diff || '(none)',
+  ].join('\n');
+}
+
 /** Focused breaking-change review of a diff (no commit message) — used by `--breaking`. */
 export function buildBreakingPrompt(diff) {
   return [

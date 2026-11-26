@@ -101,7 +101,63 @@ test('prompts include user feedback and translation request', () => {
 import { findCommitIssues } from '../src/modes/check.mjs';
 import { parseBreakingResult, mergeBreakingResults, breakingFooter } from '../src/parsing.mjs';
 import { splitFileDiffs } from '../src/git.mjs';
-import { buildBreakingPrompt } from '../src/prompts.mjs';
+import { buildBreakingPrompt, buildPullRequestPrompt } from '../src/prompts.mjs';
+import { parsePullRequest, extractBreakingNotes, formatPullRequestBody, formatCommitsForPrompt } from '../src/parsing.mjs';
+import { buildPrCreateArgs, buildPrEditArgs, parseOpenPr } from '../src/github.mjs';
+
+test('parseOpenPr and buildPrEditArgs support updating an existing PR', () => {
+  assert.deepEqual(parseOpenPr('[{"url":"https://github.com/o/r/pull/7","number":7}]'), {
+    url: 'https://github.com/o/r/pull/7',
+    number: 7,
+  });
+  assert.equal(parseOpenPr('[]'), null);
+  assert.equal(parseOpenPr('not json'), null);
+  assert.equal(parseOpenPr('[{"url":"x"}]'), null);
+  assert.deepEqual(buildPrEditArgs({ number: 7, title: 'T' }), ['pr', 'edit', '7', '--title', 'T', '--body-file', '-']);
+});
+import { collectBreakingNotes, withBreakingPrefix } from '../src/modes/pull-request.mjs';
+
+test('parsePullRequest cleans the title and lists, and rejects a missing title', () => {
+  const raw = '{"title":"\\"feat(cli): add --pr.\\"","summary":["- adds pr mode"," "],"testPlan":["run it"]}';
+  assert.deepEqual(parsePullRequest(raw), { title: 'feat(cli): add --pr', summary: ['adds pr mode'], testPlan: ['run it'] });
+  assert.equal(parsePullRequest('{"title":"  "}'), null);
+  assert.equal(parsePullRequest('nothing'), null);
+});
+
+test('extractBreakingNotes / collectBreakingNotes read commit footers and 💥 subjects', () => {
+  const commits = [
+    { subject: '💥 feat: a', body: '* x\n\nBREAKING CHANGE: key renamed' },
+    { subject: '💥 feat: b', body: '' },
+    { subject: '✨ feat: c', body: 'BREAKING CHANGE: key renamed' },
+    { subject: '🐛 fix: d', body: '' },
+  ];
+  assert.deepEqual(extractBreakingNotes(commits), ['key renamed']); // deduplicated
+  assert.deepEqual(collectBreakingNotes(commits), ['key renamed', 'Breaking change in: 💥 feat: b']);
+  assert.deepEqual(collectBreakingNotes([commits[3]]), []);
+});
+
+test('formatPullRequestBody builds sections; withBreakingPrefix adds 💥 once', () => {
+  const body = formatPullRequestBody({ summary: ['a'], testPlan: ['t'], breaking: ['b'] });
+  assert.match(body, /^## Summary\n\n- a\n\n## .*Breaking changes\n\n- b\n\n## Test plan\n\n- \[ \] t$/);
+  assert.equal(formatPullRequestBody({ summary: ['a'], testPlan: [] }), '## Summary\n\n- a');
+  assert.equal(withBreakingPrefix('feat: x', ['b']), '💥 feat: x');
+  assert.equal(withBreakingPrefix('💥 feat: x', ['b']), '💥 feat: x');
+  assert.equal(withBreakingPrefix('feat: x', []), 'feat: x');
+});
+
+test('buildPrCreateArgs passes the body on stdin and adds --draft only when asked', () => {
+  const args = buildPrCreateArgs({ base: 'develop', head: 'feat/x', title: 'T', draft: false });
+  assert.deepEqual(args, ['pr', 'create', '--base', 'develop', '--head', 'feat/x', '--title', 'T', '--body-file', '-']);
+  assert.equal(buildPrCreateArgs({ base: 'b', head: 'h', title: 'T', draft: true }).at(-1), '--draft');
+});
+
+test('PR prompt includes commits, diff and feedback; commit list formatter trims bodies', () => {
+  const p = buildPullRequestPrompt({ commitsText: '- c1', diff: 'DIFFX', feedback: 'be brief' });
+  assert.match(p, /- c1/);
+  assert.match(p, /DIFFX/);
+  assert.match(p, /be brief/);
+  assert.equal(formatCommitsForPrompt([{ subject: 's', body: 'a\nb' }]), '- s (a b)');
+});
 
 test('parseBreakingResult: breaking verdict with findings, non-breaking, and no JSON', () => {
   const raw = JSON.stringify({

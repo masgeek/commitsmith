@@ -137,3 +137,26 @@ test('listCommitShas / getCommitMessage / getCommitDiff read a commit range', as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('getCurrentBranch / getDefaultBranch / getBranchDiff in a throwaway repo', async () => {
+  const { getCurrentBranch, getDefaultBranch, getBranchDiff } = await import('../src/git.mjs');
+  const { dir, git, commit } = makeRepo();
+  const prevCwd = process.cwd();
+  try {
+    git('checkout', '-q', '-b', 'main');
+    commit('a.txt', '1', 'feat: first');
+    git('checkout', '-q', '-b', 'feat/x');
+    commit('b.txt', 'x', 'feat: add b');
+    commit('pnpm-lock.yaml', 'lock', 'chore: lock');
+    process.chdir(dir);
+
+    assert.equal(getCurrentBranch(), 'feat/x');
+    assert.equal(getDefaultBranch(), 'main'); // no origin/HEAD → falls back to a local main
+    const diff = getBranchDiff('main', 'HEAD');
+    assert.match(diff, /b\.txt/);
+    assert.doesNotMatch(diff, /pnpm-lock/);
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
