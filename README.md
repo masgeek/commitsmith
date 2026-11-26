@@ -389,6 +389,132 @@ unflagged. It makes one model call per commit and checks at most the newest 50
 commitsmith --check --from 1.0.0   # everything since the 1.0.0 tag
 ```
 
+### Commit rules, gitmoji and ticket links
+
+Project conventions go in your config (`commitRules`, `ticketLinks`, …):
+
+```json
+{
+  "commitRules": {
+    "scopes": ["cli", "api", "docs"],
+    "requireScope": true,
+    "allowedTypes": ["feat", "fix", "docs", "chore"],
+    "maxSubjectLength": 60,
+    "gitmoji": false
+  },
+  "ticketPattern": "PROJ_(\\d+)",
+  "ticketFooter": "Closes"
+}
+```
+
+- **Rules** are told to the model, applied to its answer (a scope or type outside
+  your lists is replaced — scope dropped, type becomes `chore` when allowed), and
+  enforced by `--lint-message` (the commit-msg hook) and `--check`. The hook reads
+  them straight from the config files, so it stays offline and fast. Bad values are
+  ignored with a warning (see `commitsmith doctor`), never an error.
+- **`gitmoji: false`** (or `--no-gitmoji` for one run) produces `type(scope): subject`
+  without the emoji; a breaking change is then `type(scope)!:` plus the
+  `BREAKING CHANGE:` footer. Messages with or without an emoji are understood
+  everywhere (check, bump, changelog, review menu).
+- **Ticket links:** a branch like `feature/ABC-123-login` adds `Refs: ABC-123` to every
+  generated commit message and PR description; `feat/123-login`, `issue-123` and
+  `gh-123` give `Refs: #123`. Uppercase Jira/Linear-style keys only by default, so
+  `feat/login-2` is never mistaken for a ticket. `ticketPattern` (a regex; its first
+  capture group wins) overrides detection, `ticketFooter` changes the word
+  (`Closes`, `Fixes`, …; also `COMMITSMITH_TICKET_FOOTER`), and `ticketLinks: false`
+  turns it off. A ticket the message already mentions isn't added twice.
+
+These keys fall back to your global config when a project `.commitsmithrc.json`
+exists, like the GitHub App settings.
+
+### `commitsmith doctor`
+
+One command that checks the whole setup and prints ✔ / ⚠ / ✖ per item: Node
+version, provider, config file, API key, provider reachability, whether your model
+exists, `gh` login, the GitHub App (verified against GitHub and the repo), secret
+guard mode, commit-rule warnings, the current branch's ticket, installed hooks,
+and whether `commitsmith` is on your `PATH`. Exits `1` if anything is broken.
+
+### `--amend`
+
+`commitsmith --amend` regenerates the message of the last commit from its own diff,
+shows the usual review menu (edit, change type, regenerate, …) and rewrites only the
+message. It refuses when changes are staged (an amend would fold them in). If HEAD is
+already on a remote branch it warns that amending needs a force-push, and with `-y`
+requires `--force` as well. Rules, the breaking-change footer and the ticket footer
+all apply.
+
+### `--review`
+
+`commitsmith --review` asks the model for a code review of your staged (else
+unstaged) changes, or of a range with `--from <ref> [--branch <ref>]`: real problems
+ranked high / medium / low with file, line, why and a suggested fix — not style nits —
+plus behavior that has no test coverage. It is read-only. Exit code is `0` by default;
+`--fail-on high|medium|low` makes it `1` when a finding reaches that level (handy in
+CI); `2` means part of the answer couldn't be parsed. Large diffs are reviewed per
+file (first 30). Likely secrets are redacted before anything is sent.
+
+### Secret guard (`--scan`)
+
+Diffs are sent to a model, so every request is passed through a secret guard
+first (`COMMITSMITH_SECRET_GUARD`, or `secretGuard` in config):
+
+| Mode | Behavior |
+|---|---|
+| `redact` (default) | Likely secrets become `[REDACTED:…]` in what the model sees, and a warning is printed. The secret is **still in your changes** — don't commit it. |
+| `block` | Refuses to send anything that contains a likely secret. |
+| `off` | No filtering (also `--no-secret-guard` for one run). |
+
+It recognizes AWS, GitHub, Slack, Google, OpenAI, Anthropic and Stripe keys, JWTs,
+private-key blocks, `password`/`api_key`/`token = "…"` assignments (placeholders
+like `your_password` are ignored), and sensitive files — `.env*` (not
+`.env.example`), `*.pem`, `*.key`, `*.p12`, SSH keys — whose contents are replaced
+entirely. It is pattern-based, so treat it as a safety net rather than a guarantee.
+
+`commitsmith --scan` runs the same detection offline on your staged (else
+unstaged) changes, prints `file:line  type  sample` (never the full secret) and
+exits `1` if anything is found.
+
+### Version bump (`--bump`) and changelog (`--changelog`)
+
+Both work offline from your commit history since the last tag (or `--from <ref>`).
+
+```bash
+commitsmith --bump                 # current 1.0.4, suggested minor → 1.1.0, and why
+commitsmith --bump --apply         # write the version into package.json (not committed)
+commitsmith --bump --tag           # create a local annotated tag (not pushed)
+commitsmith --changelog            # print the section for the next release
+commitsmith --changelog --output CHANGELOG.md   # insert/replace it in the file
+```
+
+The rules: a breaking change (💥 header, `type!:` or a `BREAKING CHANGE:` footer)
+means **major**, `feat`/`accessibility`/`removal` **minor**, `fix`/`perf`/`security`/
+`refactor`/`build` (and unrecognized commits) **patch**; only docs/test/ci/style/chore
+commits mean **none**. The changelog lists breaking changes first (with their
+footers), then commits by type; `ci`/`test`/`style`/`chore` are hidden unless
+`--all`. Its heading version is `--release-version`, else the suggested next
+version, else `[Unreleased]`. Tags keep the prefix of the last tag (`v` or none).
+
+### Git hooks
+
+```bash
+commitsmith hook install              # pre-commit + commit-msg
+commitsmith hook install --pre-push   # also gate pushes (calls your model)
+commitsmith hook status
+commitsmith hook uninstall            # removes only hooks commitsmith wrote
+```
+
+- **pre-commit** runs `--scan` (blocks likely secrets), **commit-msg** runs
+  `--lint-message` (`[emoji ]type(scope): subject`, known type, ≤ 72 chars; merge,
+  revert and fixup messages are exempt) — both offline and fast, with no config or
+  keychain lookup.
+- **pre-push** runs `--check --from @{u}`: the push fails if a commit hides an
+  unflagged breaking change.
+- Hooks do nothing if `commitsmith` isn't on your `PATH`. A hook you wrote yourself
+  is never overwritten unless you pass `--force` (it is then backed up as
+  `<hook>.commitsmith-backup` and restored on uninstall). Bypass once with
+  `--no-verify`. They respect `core.hooksPath`.
+
 ### `--pr` (pull requests)
 
 `commitsmith --pr` writes a pull request title and description for the current

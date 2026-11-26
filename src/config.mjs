@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { cosmiconfig } from 'cosmiconfig';
 import { GLOBAL_CONFIG_PATH } from './global-config.mjs';
+import { normalizeRules } from './rules.mjs';
 import { die } from './die.mjs';
 import { getApiKeySecret } from './secrets.mjs';
 
@@ -87,13 +88,27 @@ export async function loadConfig() {
     process.env.COMMITSMITH_RELEASE_NOTES_CONTEXT || fileConfig.releaseNotesContext || ''
   ).trim();
 
+  // Commit rules (allowed scopes/types, max subject length, gitmoji on/off) and ticket links from branch names.
+  // Like the GitHub App keys below, they fall back to the global config file when a project config exists.
+  const globalFile = readJsonObject(GLOBAL_CONFIG_PATH);
+  const { rules: RULES, warnings: RULE_WARNINGS } = normalizeRules(fileConfig.commitRules ?? globalFile.commitRules);
+  const footerRaw = String(process.env.COMMITSMITH_TICKET_FOOTER || fileConfig.ticketFooter || globalFile.ticketFooter || 'Refs');
+  const TICKETS = {
+    enabled: (fileConfig.ticketLinks ?? globalFile.ticketLinks) !== false,
+    pattern: String(fileConfig.ticketPattern ?? globalFile.ticketPattern ?? ''),
+    footer: /^[A-Za-z][A-Za-z-]*$/.test(footerRaw) ? footerRaw : 'Refs',
+  };
+
+  // What to do with likely secrets found in text about to be sent to a model: redact (default), block, or off.
+  const guardRaw = String(process.env.COMMITSMITH_SECRET_GUARD || fileConfig.secretGuard || 'redact').toLowerCase();
+  const SECRET_GUARD = ['redact', 'block', 'off'].includes(guardRaw) ? guardRaw : 'redact';
+
   // "Open PRs as a bot": a bot token, or a GitHub App (id + private key file + optional installation id).
   // The private key itself is never stored here — only the path to the .pem.
   // cosmiconfig returns only the FIRST config file it finds, so a project
   // .commitsmithrc.json would hide the machine-specific key path that
   // `init github` keeps in the global config. Fall back to the global file for
   // these keys: env var > the found config file > the global config file.
-  const globalFile = readJsonObject(GLOBAL_CONFIG_PATH);
   const pick = (key) => fileConfig[key] ?? globalFile[key];
   const GITHUB_BOT = {
     asDefault: /^(1|true|yes)$/i.test(String(process.env.COMMITSMITH_PR_AS_BOT ?? pick('prAsBot') ?? '')),
@@ -116,6 +131,10 @@ export async function loadConfig() {
     FALLBACK_MODELS,
     RELEASE_NOTES_CONTEXT,
     GITHUB_BOT,
+    SECRET_GUARD,
+    RULES,
+    RULE_WARNINGS,
+    TICKETS,
   };
   return cached;
 }
