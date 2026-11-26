@@ -25,18 +25,18 @@ export const MAX_BREAKING_FILES = 30;
  * otherwise (nothing staged) the unstaged working-tree changes.
  * Returns { source, diff, maxDiff }.
  */
-export async function prepareBreakingInput() {
+export async function prepareBreakingInput({ flag = '--breaking', rangeDiff = getReleaseNotesDiff } = {}) {
   const { MAX_DIFF } = await loadConfig();
 
   if (releaseNotesFromRef) {
     const targetRef = releaseNotesBranch || 'HEAD';
     if (!resolveCommit(targetRef)) die(`--branch: "${targetRef}" is not a valid ref in this repo.`);
     if (!resolveCommit(releaseNotesFromRef)) die(`--from: "${releaseNotesFromRef}" is not a valid ref in this repo.`);
-    const diff = getReleaseNotesDiff(releaseNotesFromRef, targetRef);
+    const diff = rangeDiff(releaseNotesFromRef, targetRef);
     if (!diff.trim()) die(`No changes between "${releaseNotesFromRef}" and "${targetRef}" — nothing to analyze.`);
     return { source: `${releaseNotesFromRef}..${targetRef}`, diff, maxDiff: MAX_DIFF };
   }
-  if (releaseNotesBranch) die('--branch needs --from with --breaking (it sets the end of the range to analyze).');
+  if (releaseNotesBranch) die(`--branch needs --from with ${flag} (it sets the end of the range to analyze).`);
 
   if (getStagedFiles().length > 0) {
     return { source: 'staged changes', diff: getStagedDiff(null), maxDiff: MAX_DIFF };
