@@ -1,5 +1,7 @@
 import {
+  args,
   helpRequested,
+  helpCommand,
   versionRequested,
   initMode,
   initGithubMode,
@@ -28,7 +30,8 @@ import {
   applyFileConfigToArgs,
 } from './cli-args.mjs';
 import { loadConfig } from './config.mjs';
-import { printHelp, printVersion } from './ui.mjs';
+import { printVersion } from './ui.mjs';
+import { printHelp } from './help.mjs';
 import { assertGitRepo, getStagedFiles } from './git.mjs';
 import { die } from './die.mjs';
 import { isInteractive } from './tty.mjs';
@@ -72,7 +75,7 @@ function warnStrayFlags() {
 }
 
 export async function run() {
-  if (helpRequested) return printHelp();
+  if (helpRequested || helpCommand) return printHelp(args);
   if (versionRequested) return printVersion();
   if (initGithubMode) return runInitGithubMode();
   if (initMode) return runInitMode();

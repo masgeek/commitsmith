@@ -277,7 +277,9 @@ commitsmith --release-notes --store play --lang fr,sw --output notes.md   # 500-
 commitsmith --no-interactive        # never prompt (automatic when piped or CI is set); --interactive forces prompts on a TTY
 
 commitsmith --no-breaking-detection # skip breaking-change classification
-commitsmith --help                  # usage summary
+commitsmith --help                  # short overview: one line per command
+commitsmith help <command>          # full page for one command, e.g. commitsmith help pr
+commitsmith <command> --help        # same: commitsmith init github --help, commitsmith --review --help
 ```
 
 At any confirmation prompt (`[y/N/e]`), answer `e` to open the generated message
@@ -477,23 +479,48 @@ exits `1` if anything is found.
 
 ### Version bump (`--bump`) and changelog (`--changelog`)
 
-Both work offline from your commit history since the last tag (or `--from <ref>`).
+Both work offline from your git history; neither calls a model.
 
 ```bash
 commitsmith --bump                 # current 1.0.4, suggested minor → 1.1.0, and why
 commitsmith --bump --apply         # write the version into package.json (not committed)
 commitsmith --bump --tag           # create a local annotated tag (not pushed)
-commitsmith --changelog            # print the section for the next release
-commitsmith --changelog --output CHANGELOG.md   # insert/replace it in the file
+
+commitsmith --changelog            # print the whole changelog: unreleased + every tag
+commitsmith --changelog --output CHANGELOG.md             # create or refresh the file
+commitsmith --changelog --release-version 1.1.0 --output CHANGELOG.md   # cut a release
+commitsmith --changelog --unreleased                      # just the unreleased section
 ```
 
-The rules: a breaking change (💥 header, `type!:` or a `BREAKING CHANGE:` footer)
-means **major**, `feat`/`accessibility`/`removal` **minor**, `fix`/`perf`/`security`/
-`refactor`/`build` (and unrecognized commits) **patch**; only docs/test/ci/style/chore
-commits mean **none**. The changelog lists breaking changes first (with their
-footers), then commits by type; `ci`/`test`/`style`/`chore` are hidden unless
-`--all`. Its heading version is `--release-version`, else the suggested next
-version, else `[Unreleased]`. Tags keep the prefix of the last tag (`v` or none).
+**Bump rules** (commits since the last tag, or `--from <ref>`): a breaking change (💥 header,
+`type!:` or a `BREAKING CHANGE:` footer) means **major**, `feat`/`accessibility`/`removal`
+**minor**, `fix`/`perf`/`security`/`refactor`/`build` (and unrecognized commits) **patch**;
+only docs/test/ci/style/chore commits mean **none**. Tags keep the prefix of the last tag
+(`v` or none).
+
+**The changelog** tracks every semver tag reachable from `HEAD` (`1.2.3` or `v1.2.3`):
+
+```markdown
+# Changelog
+
+## [Unreleased]            ← commits since the newest tag
+## [1.0.4] - 2026-11-26    ← commits between 1.0.3 and 1.0.4, dated by the tag
+## [1.0.3] - 2026-11-26
+## [1.0.0] - 2026-11-26    ← oldest tag: everything up to it
+```
+
+Each section lists breaking changes first (with their footers), then commits by type;
+`ci`/`test`/`style`/`chore` are hidden unless `--all`.
+
+- **`--output <file>`** creates the file if it is missing. If it exists it is *merged*, not
+  overwritten: `[Unreleased]` is refreshed, releases that are missing are inserted in version
+  order, and releases already in the file are left exactly as you wrote them. `--rebuild`
+  regenerates the whole file instead.
+- **`--release-version <v>`** labels the unreleased changes as `<v>` with today’s date
+  (replacing `[Unreleased]` in an existing file) — run it when you cut a release, before tagging.
+- **`--from <ref>`** limits the history to what came after that ref; `--branch <ref>` ends it
+  there instead of at `HEAD`.
+- With no version tags at all, the whole history is shown as unreleased.
 
 ### Git hooks
 
