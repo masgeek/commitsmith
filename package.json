@@ -1,0 +1,66 @@
+{
+  "name": "@masgeek/commitsmith",
+  "version": "1.0.0",
+  "description": "Minimal AI-powered git commit message generator backed by local Ollama models or cloud providers (Ollama Cloud, OpenAI, Anthropic). Supports single-line, per-file, per-hunk, and grouped-by-related-change commits, with breaking-change detection.",
+  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.23.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "commitsmith": "./commitsmith.mjs"
+  },
+  "files": [
+    "commitsmith.mjs",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node commitsmith.mjs",
+    "commit": "node commitsmith.mjs",
+    "commit:go": "node commitsmith.mjs --commit",
+    "commit:split": "node commitsmith.mjs --split --commit",
+    "commit:hunks": "node commitsmith.mjs --split-hunks --commit",
+    "commit:group": "node commitsmith.mjs --group --commit",
+    "commit:check": "node commitsmith.mjs --check",
+    "release-notes": "node commitsmith.mjs --release-notes",
+    "test:syntax": "node scripts/check-syntax.mjs",
+    "test:unit": "node --test \"test/**/*.test.mjs\"",
+    "test": "node scripts/check-syntax.mjs && node --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "@napi-rs/keyring": "^2.1.2",
+    "chalk": "^6.0.1",
+    "cosmiconfig": "^10.0.1",
+    "env-paths": "^4.0.0",
+    "ora": "^10.0.0"
+  },
+  "keywords": [
+    "git",
+    "commit",
+    "commit-message",
+    "conventional-commits",
+    "ai",
+    "cli",
+    "ollama",
+    "ollama-cloud",
+    "openai",
+    "anthropic",
+    "local-llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/masgeek/commitsmith.git"
+  },
+  "bugs": {
+    "url": "https://github.com/masgeek/commitsmith/issues"
+  },
+  "homepage": "https://github.com/masgeek/commitsmith#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,115 @@
+name: Publish to npm
+
+on:
+  release:
+    # Published only — "created"/"prereleased" would double-fire alongside
+    # "published" for a non-draft release and race npm publish with itself.
+    types: [published]
+  workflow_dispatch:
+
+# Triggered by a published GitHub Release (created by bump-version.yml after
+# CI succeeds on main), not by tag pushes — so one release can't fire this
+# twice. `workflow_dispatch` is a manual escape hatch.
+#
+# Publishes via npm Trusted Publishing (OIDC) — no NPM_TOKEN secret needed.
+# One-time setup: publish the first version manually with a token, then
+# configure the Trusted Publisher on npmjs.com -> package settings ->
+# Trusted Publisher, pointing at this repo + this workflow filename.
+
+permissions:
+  contents: write   # write needed so the "Comment on release" step can post
+  id-token: write   # required — this is what lets npm mint the OIDC token
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Syntax check (commitsmith.mjs + every src/**/*.mjs module)
+        run: pnpm test
+
+      - name: Smoke test (exercises the full module import graph)
+        run: node commitsmith.mjs --help
+      - name: Configure npm for scoped package
+        run: npm config set @masgeek:registry https://registry.npmjs.org/
+
+      - name: Pin package.json version to the release tag
+        env:
+          TAG_VERSION: ${{ github.ref_name }}
+        run: |
+          # The tag (created automatically by .github/workflows/bump-version.yml,
+          # computed from commit messages) is the source of truth for the
+          # release version, not package.json — that action only tags, it never
+          # bumps package.json. So we patch the version here in the CI checkout,
+          # right before publishing, instead of requiring it to already match.
+          # This is NOT committed back to git — main's package.json keeps
+          # whatever version a human last set via `pnpm version`.
+          if ! [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$TAG_VERSION' is not a plain semver version (expected e.g. 1.2.3)."
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = process.env.TAG_VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "package.json version set to $TAG_VERSION for this publish."
+
+      - name: Stage publish (Trusted Publishing / OIDC)
+        run: npm stage publish --provenance --access public
+        # No NODE_AUTH_TOKEN here on purpose — npm CLI v11+ auto-detects the
+        # GitHub Actions OIDC context itself. Setting NODE_AUTH_TOKEN (even to
+        # GITHUB_TOKEN) makes npm try to auth with that invalid token instead
+        # of going through the Trusted Publisher OIDC exchange.
+        # Deliberately `npm`, not `pnpm` — Trusted Publishing here relies on
+        # npm CLI v11+'s auto-detection of the GitHub Actions OIDC context (no
+        # NODE_AUTH_TOKEN needed), tied to the Trusted Publisher config on
+        # npmjs.com for this exact repo + workflow file. Switching package
+        # managers for this one step risks breaking that OIDC handshake, so
+        # every other step uses pnpm but this one stays npm.
+        #
+        # `npm stage publish`, not `npm publish` — the Trusted Publisher on
+        # npmjs.com is configured stage-only, so the registry rejects a
+        # direct `npm publish` from CI outright. This step only stages the
+        # release; a human still has to run `npm stage approve <stage-id>`
+        # (or approve on npmjs.com) with 2FA before it actually goes live.
+        # That manual approval gate is the entire point — it means a
+        # compromised token/workflow can stage a release but never finalize
+        # one by itself.
+
+      - name: Capture published tarball
+        if: success()
+        run: |
+          mkdir -p ./dist
+          npm pack --pack-destination ./dist
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: published-tgz
+          path: ./dist/*.tgz
+      - name: Note staged-publish status on the release
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # There is no `gh release comment` (releases don't have comments the
+          # way issues/PRs do — gh release --help only lists create/edit/view/
+          # etc.) — append the status to the release notes instead.
+          NOTES="$(gh release view "${{ github.ref_name }}" --json body -q .body)"
+          STATUS=$'\n\n---\n📦 npm stage publish succeeded — awaiting manual 2FA approval (`npm stage approve` or on npmjs.com) before this version goes live.'
+          gh release edit "${{ github.ref_name }}" --notes "${NOTES}${STATUS}"

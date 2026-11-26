@@ -1,0 +1,17 @@
+node_modules/
+*.tgz
+.DS_Store
+Thumbs.db
+
+# Local test artifact from trying `commitsmith init` in this repo itself —
+# not meant to be tracked here (downstream projects using commitsmith are
+# still free to commit their own, per the README).
+.commitsmithrc
+.commitsmithrc.json
+.commitsmithrc.yaml
+.commitsmithrc.yml
+.commitsmithrc.js
+commitsmith.config.js
+
+# JetBrains IDE settings
+.idea/
