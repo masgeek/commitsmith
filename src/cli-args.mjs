@@ -2,6 +2,7 @@ import { STORE_PRESETS } from './constants.mjs';
 
 export const args = process.argv.slice(2);
 export const noInteractive = args.includes('--no-interactive');
+export const noSecretGuard = args.includes('--no-secret-guard');
 export const forceInteractive = args.includes('--interactive');
 export const initMode = args[0] === 'init';
 export const initGithubMode = args[0] === 'init' && args[1] === 'github';
@@ -14,6 +15,20 @@ export let groupMode = args.includes('--group');
 export let dryRun = args.includes('--dry-run');
 export const checkMode = args.includes('--check');
 export const breakingMode = args.includes('--breaking');
+export const noGitmoji = args.includes('--no-gitmoji');
+export const amendMode = args.includes('--amend');
+export const reviewMode = args.includes('--review');
+export const doctorMode = args[0] === 'doctor';
+export const scanMode = args.includes('--scan');
+export const bumpMode = args.includes('--bump');
+export const bumpApply = args.includes('--apply');
+export const bumpTag = args.includes('--tag');
+export const changelogMode = args.includes('--changelog');
+export const changelogAll = args.includes('--all');
+export const hookMode = args[0] === 'hook';
+export const hookAction = hookMode ? (args[1] ?? 'status') : null;
+export const hookPrePush = args.includes('--pre-push');
+export const hookForce = args.includes('--force');
 export const prMode = args.includes('--pr');
 export const prDraft = args.includes('--draft');
 export const prCreate = args.includes('--create');
@@ -68,6 +83,22 @@ export const releaseNotesLangs = langRaw
       .filter(Boolean)
   : [];
 export const prBase = readFlag('--base');
+export const lintMessageFile = readFlag('--lint-message');
+export const releaseVersion = readFlag('--release-version');
+const failOnRaw = readFlag('--fail-on');
+if (failOnRaw !== null && !['high', 'medium', 'low'].includes(failOnRaw)) {
+  releaseNotesArgErrors.push('--fail-on must be one of: high, medium, low.');
+}
+/** Lowest review severity that makes `--review` exit 1 (null = never). */
+export const failOn = ['high', 'medium', 'low'].includes(failOnRaw) ? failOnRaw : null;
+/** Flags that only make sense with one mode, as [mode flag, [its flags]] — cli.mjs warns when they appear alone. */
+export const scopedFlagGroups = [
+  ['--bump', ['--apply', '--tag'], bumpMode],
+  ['--changelog', ['--all', '--release-version'], changelogMode],
+  ['hook', ['--pre-push'], hookMode],
+  ['hook or --amend', ['--force'], hookMode || amendMode],
+  ['--review', ['--fail-on'], reviewMode],
+].map(([mode, flags, active]) => ({ mode, active, used: flags.filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`))) }));
 /** Pull-request-only flags on the command line (to warn when used without --pr). */
 export const prFlagsUsed = ['--base', '--draft', '--create', '--as-bot'].filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`)));
 /** Release-notes-only flags on the command line (to warn when used without --release-notes). */
@@ -84,7 +115,7 @@ export const versionRequested = args.includes('--version') || args.includes('-v'
 // interactive staging prompt (see modes/interactive-stage.mjs), we also ask
 // the user which mode/commit behavior to run, instead of silently defaulting.
 export const bareInvocation =
-  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode;
+  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode && !scanMode && !bumpMode && !changelogMode && !lintMessageFile && !hookMode && !amendMode && !reviewMode && !doctorMode;
 
 /** Applies the config file's `breakingDetection: false`, once config.mjs's loadConfig() has resolved it. */
 export function applyFileConfigToArgs(fileConfig) {

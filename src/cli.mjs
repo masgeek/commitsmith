@@ -12,6 +12,15 @@ import {
   breakingMode,
   prMode,
   prFlagsUsed,
+  scanMode,
+  bumpMode,
+  changelogMode,
+  hookMode,
+  amendMode,
+  reviewMode,
+  doctorMode,
+  lintMessageFile,
+  scopedFlagGroups,
   releaseNotesMode,
   releaseNotesArgErrors,
   releaseNotesFlagsUsed,
@@ -35,7 +44,32 @@ import { runBreakingMode, prepareBreakingInput } from './modes/breaking.mjs';
 import { runPullRequestMode, preparePullRequest } from './modes/pull-request.mjs';
 import { runCheckMode, prepareCheckRange } from './modes/check.mjs';
 import { prepareReleaseNotes, runReleaseNotesMode } from './modes/release-notes.mjs';
+import { runScanMode, runLintMessageMode } from './modes/scan.mjs';
+import { runBumpMode } from './modes/bump.mjs';
+import { runChangelogMode } from './modes/changelog.mjs';
+import { runHookMode } from './modes/hook.mjs';
+import { runAmendMode } from './modes/amend.mjs';
+import { runReviewMode, prepareReviewInput } from './modes/review.mjs';
+import { runDoctorMode } from './modes/doctor.mjs';
 import { maybeInteractiveStage, maybeInteractivePickRunOptions } from './modes/interactive-stage.mjs';
+
+/** Warns about flags that only apply to a mode that wasn't selected. */
+function warnStrayFlags() {
+  // --from/--branch select the range for check, breaking, bump and changelog; --output also names the changelog file.
+  const rangeModes = checkMode || breakingMode || bumpMode || changelogMode || reviewMode;
+  const strayFlags = releaseNotesFlagsUsed.filter(
+    (f) => !(rangeModes && (f === '--from' || f === '--branch')) && !(changelogMode && f === '--output')
+  );
+  if (!releaseNotesMode && strayFlags.length > 0) {
+    console.warn(`${strayFlags.join(', ')} only apply with --release-notes; ignoring.`);
+  }
+  if (!prMode && prFlagsUsed.length > 0) {
+    console.warn(`${prFlagsUsed.join(', ')} only apply with --pr; ignoring.`);
+  }
+  for (const { mode, active, used } of scopedFlagGroups) {
+    if (!active && used.length > 0) console.warn(`${used.join(', ')} only apply with ${mode}; ignoring.`);
+  }
+}
 
 export async function run() {
   if (helpRequested) return printHelp();
@@ -44,21 +78,26 @@ export async function run() {
   if (initMode) return runInitMode();
   if (useMode) return runUseMode();
 
+  if (releaseNotesArgErrors.length > 0) die(releaseNotesArgErrors.join('\n'));
+
+  // Offline modes: no model, no provider, and — importantly for git hooks that
+  // run on every commit — no config or keychain lookup at all.
+  if (hookMode || scanMode || lintMessageFile || bumpMode || changelogMode) {
+    warnStrayFlags();
+    assertGitRepo();
+    if (hookMode) return runHookMode();
+    if (scanMode) return runScanMode();
+    if (lintMessageFile) return runLintMessageMode(lintMessageFile);
+    if (bumpMode) return runBumpMode();
+    return runChangelogMode();
+  }
+
   const { fileConfig } = await loadConfig();
   applyFileConfigToArgs(fileConfig);
 
-  if (releaseNotesArgErrors.length > 0) die(releaseNotesArgErrors.join('\n'));
-  // --from/--branch also select the range for `--check` and `--breaking`.
-  const strayFlags = releaseNotesFlagsUsed.filter(
-    (f) => !((checkMode || breakingMode) && (f === '--from' || f === '--branch'))
-  );
-  if (!releaseNotesMode && strayFlags.length > 0) {
-    console.warn(`${strayFlags.join(', ')} only apply with --release-notes; ignoring.`);
-  }
+  warnStrayFlags();
 
-  if (!prMode && prFlagsUsed.length > 0) {
-    console.warn(`${prFlagsUsed.join(', ')} only apply with --pr; ignoring.`);
-  }
+  if (doctorMode) return runDoctorMode(); // works outside a git repo too
 
   assertGitRepo();
   // Validate refs before the (network) provider check so bad input fails fast.
@@ -66,8 +105,11 @@ export async function run() {
   const checkRange = checkMode ? prepareCheckRange() : null;
   const breakingInput = breakingMode ? await prepareBreakingInput() : null;
   const prInput = prMode ? await preparePullRequest() : null;
+  const reviewInput = reviewMode ? await prepareReviewInput() : null;
   await assertProviderReachable();
 
+  if (amendMode) return runAmendMode();
+  if (reviewInput) return runReviewMode(reviewInput);
   if (prInput) return runPullRequestMode(prInput, { interactive: isInteractive() });
   if (breakingInput) return runBreakingMode(breakingInput);
   if (checkMode) return runCheckMode(checkRange);

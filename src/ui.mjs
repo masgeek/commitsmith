@@ -37,6 +37,23 @@ Usage:
   commitsmith --breaking [--from <ref> [--branch <ref>]]
                                    dry run: detect breaking changes in staged (else unstaged) changes or a range,
                                    print findings + a BREAKING CHANGE footer; exit 1 if any, writes nothing
+  commitsmith doctor               check the whole setup: provider, model, gh, GitHub App, hooks, rules, ticket link
+  commitsmith --amend              regenerate HEAD's message from its diff (review menu; refuses staged changes;
+                                   --force with -y to amend a commit that is already pushed)
+  commitsmith --review [--from <ref> [--branch <ref>]] [--fail-on high|medium|low]
+                                   AI code review of staged/unstaged changes or a range: problems ranked by severity,
+                                   plus missing tests; read-only
+  commitsmith --no-gitmoji         drop the leading emoji from generated messages for this run
+  commitsmith --scan               offline secret scan of staged (else unstaged) changes; exit 1 if any
+                                   (every model request also redacts secrets; --no-secret-guard turns that off)
+  commitsmith --bump [--from <ref>] [--apply] [--tag]
+                                   suggest the next semver from commits since the last tag (offline);
+                                   --apply writes package.json, --tag creates a local tag
+  commitsmith --changelog [--from <ref>] [--release-version <v>] [--all] [--output CHANGELOG.md]
+                                   changelog section from commits since the last tag (offline)
+  commitsmith hook install [--pre-push] [--force] | uninstall | status
+                                   git hooks: pre-commit secret scan, commit-msg format check, optional pre-push gate
+  commitsmith --lint-message <file>  check a commit message file (used by the commit-msg hook)
   commitsmith --pr [--base <branch>] [--create|-y] [--draft] [--as-bot]
                                    generate a PR title + description from the branch's commits (breaking changes
                                    included); preview by default, --create pushes the branch and opens it via gh
