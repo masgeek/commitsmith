@@ -114,3 +114,49 @@ test('release-notes git helpers: tags, commits and filtered diff', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('listCommitShas / getCommitMessage / getCommitDiff read a commit range', async () => {
+  const { listCommitShas, getCommitMessage, getCommitDiff } = await import('../src/git.mjs');
+  const { dir, git, commit } = makeRepo();
+  const prevCwd = process.cwd();
+  try {
+    commit('a.txt', '1', 'feat: first');
+    git('tag', 'base');
+    commit('b.txt', 'x', 'feat: add b');
+    commit('c.txt', 'y', 'fix: add c');
+    process.chdir(dir);
+
+    const shas = listCommitShas('base', 'HEAD');
+    assert.equal(shas.length, 2);
+    assert.equal(getCommitMessage(shas[0]), 'feat: add b'); // oldest first
+    assert.equal(getCommitMessage(shas[1]), 'fix: add c');
+    assert.match(getCommitDiff(shas[0]), /b\.txt/);
+    assert.doesNotMatch(getCommitDiff(shas[0]), /c\.txt/);
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('getCurrentBranch / getDefaultBranch / getBranchDiff in a throwaway repo', async () => {
+  const { getCurrentBranch, getDefaultBranch, getBranchDiff } = await import('../src/git.mjs');
+  const { dir, git, commit } = makeRepo();
+  const prevCwd = process.cwd();
+  try {
+    git('checkout', '-q', '-b', 'main');
+    commit('a.txt', '1', 'feat: first');
+    git('checkout', '-q', '-b', 'feat/x');
+    commit('b.txt', 'x', 'feat: add b');
+    commit('pnpm-lock.yaml', 'lock', 'chore: lock');
+    process.chdir(dir);
+
+    assert.equal(getCurrentBranch(), 'feat/x');
+    assert.equal(getDefaultBranch(), 'main'); // no origin/HEAD → falls back to a local main
+    const diff = getBranchDiff('main', 'HEAD');
+    assert.match(diff, /b\.txt/);
+    assert.doesNotMatch(diff, /pnpm-lock/);
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

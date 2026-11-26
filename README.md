@@ -267,6 +267,7 @@ commitsmith --group -y              # same, no confirmation prompts
 
 commitsmith --split-hunks --dry-run # preview hunks + messages, no staging or commits
 commitsmith --check                 # re-classify HEAD's diff, warn if its message looks inconsistent
+commitsmith --check --from v1.0.0   # scan every commit since a ref (pre-release gate for unflagged breaking changes)
 
 commitsmith --release-notes         # print user-facing notes since the last tag, compared against HEAD
 commitsmith --release-notes --from v1.0.0   # use a specific base ref instead of the last tag
@@ -377,6 +378,71 @@ useful for catching commits made by hand (bypassing `commitsmith`) that forgot a
 💥/`BREAKING CHANGE` flag or used a mismatched type. Read-only: it never
 touches the index or rewrites history, and it exits non-zero when it finds an
 issue, so it works as a CI check or a post-commit/pre-push hook gate.
+
+`commitsmith --check --from <ref> [--branch <ref>]` does the same for **every
+non-merge commit** in `<ref>..HEAD` (or `..<branch>`) — a pre-release gate that
+lists each commit as ✅ or ⚠ and exits non-zero if any breaking change went
+unflagged. It makes one model call per commit and checks at most the newest 50
+(narrow `--from` to cover more).
+
+```bash
+commitsmith --check --from 1.0.0   # everything since the 1.0.0 tag
+```
+
+### `--pr` (pull requests)
+
+`commitsmith --pr` writes a pull request title and description for the current
+branch from its commits and diff against the base branch, then — only when you
+ask — pushes the branch and opens the PR through the [GitHub CLI](https://cli.github.com)
+(`gh`, logged in via `gh auth login`).
+
+```bash
+commitsmith --pr                     # preview the title + description (nothing pushed or created)
+commitsmith --pr --create            # push the branch if needed and open the PR (-y does the same)
+commitsmith --pr --create --draft    # open it as a draft
+commitsmith --pr --base develop      # compare against / target another base (default: origin's default branch)
+```
+
+- The description has **Summary**, **Breaking changes** and **Test plan** (unchecked
+  boxes) sections. Breaking changes are lifted from the commits'
+  `BREAKING CHANGE:` footers, not guessed again, and the title gets a leading 💥.
+- In a terminal you get a menu: create, create as draft, edit the title, edit the
+  description in `$EDITOR`, regenerate (optionally with an instruction), copy, or
+  cancel. Without a terminal, `--pr` only previews unless you pass `--create`.
+- It never force-pushes and refuses to run on the base branch or a branch with no
+  commits ahead.
+- If a PR is **already open** for the branch (checked before anything is
+  generated), it is updated instead of duplicated: the menu offers "Update pull
+  request #N", `--create`/`-y` update it directly, new commits are pushed first,
+  and its title and description are replaced (draft state is kept).
+- Preview goes to stdout, status to stderr; `--create` prints the PR URL.
+
+### `--breaking` (dry run)
+
+`commitsmith --breaking` answers "does this change break anything?" **before**
+you commit. It sends the staged changes (or, if nothing is staged, the
+unstaged working-tree changes) to the model with a prompt focused only on
+breaking changes — removed or renamed CLI flags, env vars, config keys,
+exported functions, routes, schemas, or changed defaults — and prints each
+finding with its impact plus a ready-to-paste `BREAKING CHANGE:` footer. It
+never writes a commit message or touches the index or history.
+
+```bash
+commitsmith --breaking                  # staged (else unstaged) changes
+commitsmith --breaking --from 1.0.0     # everything since a tag, compared against HEAD
+commitsmith --breaking --from 1.0.0 --branch main
+```
+
+The same review runs automatically when commit messages are generated: if the
+message wasn't already flagged, a second, focused breaking-change pass looks at
+the diff (per group in `--group`/`--split`), and a hit gets the 💥 header plus
+the `BREAKING CHANGE:` footer. That costs one extra model call per message;
+`--no-breaking-detection` (or `breakingDetection: false`) turns both off.
+
+Exit code: `1` when breaking changes are found, `2` if part of the answer
+couldn't be parsed (so a gate never passes silently), `0` otherwise — handy as
+a pre-release or CI gate. Lockfiles, tests and `.github/` are ignored for
+ranges. Large diffs are analyzed per file (first 30 files).
 
 ---
 

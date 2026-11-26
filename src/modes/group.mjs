@@ -5,7 +5,7 @@ import { buildGroupingPrompt } from '../prompts.mjs';
 import { parseGroupingResult } from '../parsing.mjs';
 import { callModel } from '../providers/index.mjs';
 import { confirmWithEdit } from '../ui.mjs';
-import { generateMessageForDiffText } from '../generate.mjs';
+import { generateMessageForDiffText, addBreakingFooterIfNeeded } from '../generate.mjs';
 import { shouldCommit, autoYes, breakingDetectionEnabled } from '../cli-args.mjs';
 import { isInteractive } from '../tty.mjs';
 import { printGroups, reviewGroups } from './group-review.mjs';
@@ -39,6 +39,16 @@ export async function runGroupedCommitFlow(files) {
 
   let groups = parseGroupingResult(raw, files, breakingDetectionEnabled);
   if (!groups) return false;
+
+  // The grouping prompt judges breaking changes only in passing; give each
+  // not-yet-flagged group the focused review so its footer isn't missed.
+  const { MAX_DIFF } = await loadConfig();
+  for (const g of groups) {
+    if (g.breaking) continue;
+    const reviewed = await addBreakingFooterIfNeeded(g.message, truncateDiff(getStagedDiff(g.files), MAX_DIFF), g.files.join(', '));
+    g.message = reviewed.message;
+    g.breaking = reviewed.breaking;
+  }
 
   console.log(`\nDetected ${groups.length} logical group(s):\n`);
   printGroups(groups);
