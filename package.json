@@ -10,9 +10,9 @@
     "node": ">=18"
   },
   "bin": {
-    "commitsmith": "./commitsmith.mjs",
-    "csmith": "./commitsmith.mjs",
-    "csm": "./commitsmith.mjs"
+    "commitsmith": "commitsmith.mjs",
+    "csmith": "commitsmith.mjs",
+    "csm": "commitsmith.mjs"
   },
   "files": [
     "commitsmith.mjs",
