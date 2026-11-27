@@ -622,6 +622,18 @@ export function autosquashFrom(sha) {
   }
 }
 
+/** Tag names that exist on origin (empty when there is no reachable remote). */
+export function listRemoteTags() {
+  try {
+    return execFileSync('git', ['ls-remote', '--tags', '--refs', 'origin'], BIG)
+      .split('\n')
+      .map((l) => l.split('\trefs/tags/')[1])
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Pushes the current branch and/or a tag to origin (never forced). */
 export function pushRefs(refs) {
   try {

@@ -22,6 +22,7 @@ import {
   reviewMode,
   doctorMode,
   releaseMode,
+  releaseTagsMode,
   fixupMode,
   rewordMode,
   standupMode,
@@ -54,6 +55,7 @@ import { runCheckMode, prepareCheckRange } from './modes/check.mjs';
 import { prepareReleaseNotes, runReleaseNotesMode } from './modes/release-notes.mjs';
 import { runScanMode, runLintMessageMode, runLintCommitsMode } from './modes/scan.mjs';
 import { runReleaseMode } from './modes/release.mjs';
+import { runReleaseTagsMode } from './modes/release-tags.mjs';
 import { runFixupMode } from './modes/fixup.mjs';
 import { runRewordMode } from './modes/reword.mjs';
 import { runStandupMode } from './modes/standup.mjs';
@@ -69,7 +71,7 @@ import { maybeInteractiveStage, maybeInteractivePickRunOptions } from './modes/i
 function warnStrayFlags() {
   // --from/--branch select the range for check, breaking, bump, changelog, release, reword and lint-commits;
   // --output also names the changelog file; --copy works with --standup.
-  const rangeModes = checkMode || breakingMode || bumpMode || changelogMode || reviewMode || releaseMode || rewordMode || lintCommitsMode;
+  const rangeModes = checkMode || breakingMode || bumpMode || changelogMode || reviewMode || releaseMode || releaseTagsMode || rewordMode || lintCommitsMode;
   const strayFlags = releaseNotesFlagsUsed.filter(
     (f) =>
       !(rangeModes && (f === '--from' || f === '--branch')) &&
@@ -80,7 +82,7 @@ function warnStrayFlags() {
     console.warn(`${strayFlags.join(', ')} only apply with --release-notes; ignoring.`);
   }
   // --release also takes --draft and --as-bot (for the GitHub Release).
-  const strayPr = prFlagsUsed.filter((f) => !(releaseMode && (f === '--draft' || f === '--as-bot')));
+  const strayPr = prFlagsUsed.filter((f) => !((releaseMode || releaseTagsMode || bumpMode) && (f === '--draft' || f === '--as-bot')));
   if (!prMode && strayPr.length > 0) {
     console.warn(`${strayPr.join(', ')} only apply with --pr; ignoring.`);
   }
@@ -121,6 +123,7 @@ export async function run() {
 
   assertGitRepo();
   if (releaseMode) return runReleaseMode(); // git + optional gh; no model
+  if (releaseTagsMode) return runReleaseTagsMode(); // git + gh; no model
   // Validate refs before the (network) provider check so bad input fails fast.
   const releaseNotesInput = releaseNotesMode ? await prepareReleaseNotes({ interactive: isInteractive() }) : null;
   const checkRange = checkMode ? prepareCheckRange() : null;

@@ -23,6 +23,7 @@ export const scanMode = args.includes('--scan');
 export const bumpMode = args.includes('--bump');
 export const bumpApply = args.includes('--apply');
 export const bumpTag = args.includes('--tag');
+export const bumpJson = args.includes('--json');
 export const changelogMode = args.includes('--changelog');
 export const changelogAll = args.includes('--all');
 export const changelogUnreleasedOnly = args.includes('--unreleased');
@@ -42,6 +43,7 @@ export const noScopeHint = args.includes('--no-scope-hint');
 export const noWarnings = args.includes('--no-warnings');
 export const releaseMode = args.includes('--release');
 export const releasePush = args.includes('--push');
+export const releaseTagsMode = args.includes('--release-tags');
 export const releaseGithub = args.includes('--github');
 export const noChangelog = args.includes('--no-changelog');
 export const fixupMode = args.includes('--fixup');
@@ -112,11 +114,12 @@ if (failOnRaw !== null && !['high', 'medium', 'low'].includes(failOnRaw)) {
 export const failOn = ['high', 'medium', 'low'].includes(failOnRaw) ? failOnRaw : null;
 /** Flags that only make sense with one mode, as [mode flag, [its flags]] — cli.mjs warns when they appear alone. */
 export const scopedFlagGroups = [
-  ['--bump', ['--apply', '--tag'], bumpMode],
+  ['--bump', ['--apply', '--tag', '--json'], bumpMode],
   ['--changelog', ['--unreleased', '--rebuild', '--stdout'], changelogMode],
-  ['--changelog or --reword', ['--all'], changelogMode || rewordMode],
+  ['--changelog, --reword or --release-tags', ['--all'], changelogMode || rewordMode || releaseTagsMode],
   ['--changelog or --release', ['--release-version'], changelogMode || releaseMode],
-  ['--release', ['--push', '--github', '--no-changelog'], releaseMode],
+  ['--release', ['--no-changelog'], releaseMode],
+  ['--bump --tag or --release', ['--push', '--github'], bumpMode || releaseMode],
   ['--fixup', ['--autosquash'], fixupMode],
   ['--standup', ['--since', '--author', '--all-branches'], standupMode],
   ['hook', ['--pre-push'], hookMode],
@@ -140,7 +143,7 @@ export const versionRequested = args.includes('--version') || args.includes('-v'
 // interactive staging prompt (see modes/interactive-stage.mjs), we also ask
 // the user which mode/commit behavior to run, instead of silently defaulting.
 export const bareInvocation =
-  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode && !scanMode && !bumpMode && !changelogMode && !lintMessageFile && !hookMode && !amendMode && !reviewMode && !doctorMode && !releaseMode && !fixupMode && !rewordMode && !standupMode && !lintCommitsMode;
+  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode && !scanMode && !bumpMode && !changelogMode && !lintMessageFile && !hookMode && !amendMode && !reviewMode && !doctorMode && !releaseMode && !fixupMode && !rewordMode && !standupMode && !lintCommitsMode && !releaseTagsMode;
 
 /** Applies the config file's `breakingDetection: false`, once config.mjs's loadConfig() has resolved it. */
 export function applyFileConfigToArgs(fileConfig) {

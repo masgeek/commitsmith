@@ -5,8 +5,10 @@ import { parseNumstat, analyzeStaged } from '../src/staged-check.mjs';
 import { parseHunkRanges, parseBlameShas, rankCandidates } from '../src/modes/fixup.mjs';
 import { keepTrailers, selectRewordTargets, isLinearChain } from '../src/modes/reword.mjs';
 import { chooseVersion, releaseBody, releaseCommitMessage } from '../src/modes/release.mjs';
+import { bumpSummary } from '../src/modes/bump.mjs';
 import { defaultSince, resolveAuthor } from '../src/modes/standup.mjs';
-import { buildReleaseCreateArgs } from '../src/github.mjs';
+import { buildReleaseCreateArgs, parseReleaseTags } from '../src/github.mjs';
+import { planReleases } from '../src/modes/release-tags.mjs';
 import { parseStandup, formatStandup } from '../src/parsing.mjs';
 import { ruleLines, DEFAULT_RULES } from '../src/rules.mjs';
 
@@ -165,6 +167,45 @@ test('releaseBody drops the heading; the release commit message is conventional;
   assert.deepEqual(args.slice(0, 3), ['release', 'create', 'v1.3.0']);
   for (const flag of ['--notes-file', '--verify-tag', '--prerelease', '--draft']) assert.ok(args.includes(flag), flag);
   assert.ok(!buildReleaseCreateArgs({ tag: 't' }).includes('--draft'));
+});
+
+test('bumpSummary reports the tag and breaking flag, and nulls them when nothing is releasable', () => {
+  const base = { current: '1.2.3', baseRef: '1.2.3', prefix: '', reasons: [] };
+  const major = bumpSummary({ ...base, commits: [{}], level: 'major', next: '2.0.0', reasons: [{ type: 'feat', scope: 'cli', description: 'x', breaking: true, sha: 'abc' }] });
+  assert.equal(major.tag, '2.0.0');
+  assert.equal(major.breaking, true);
+  assert.equal(major.reasons[0].sha, 'abc');
+  const minor = bumpSummary({ ...base, prefix: 'v', commits: [{}], level: 'minor', next: '1.3.0' });
+  assert.deepEqual([minor.tag, minor.breaking], ['v1.3.0', false]);
+  const none = bumpSummary({ ...base, commits: [{}], level: 'none', next: '1.2.3' });
+  assert.deepEqual([none.level, none.tag, none.next], ['none', null, null]);
+  assert.equal(bumpSummary({ ...base, commits: [], level: 'none', next: '1.2.3' }).tag, null);
+});
+
+test('planReleases: newest tag only by default, a latest-pinned backfill with all, nothing when released', () => {
+  const tags = [
+    { tag: '2.0.0-beta.1', version: '2.0.0-beta.1' },
+    { tag: '1.1.0', version: '1.1.0' },
+    { tag: '1.0.0', version: '1.0.0' },
+  ].sort(() => 0); // already newest-first
+  const t = (v) => tags.find((x) => x.tag === v);
+
+  assert.deepEqual(planReleases(tags, []).map((p) => [p.tag, p.latest]), [['2.0.0-beta.1', false]]);
+  assert.deepEqual(planReleases(tags, ['2.0.0-beta.1']), []); // newest has one; older ones need --all
+  assert.deepEqual(
+    planReleases(tags, ['1.1.0'], true).map((p) => p.tag),
+    ['1.0.0', '2.0.0-beta.1'] // oldest first, skipping the released one
+  );
+  const stable = [t('1.1.0'), t('1.0.0')];
+  assert.deepEqual(planReleases(stable, [], true).map((p) => [p.tag, p.latest]), [['1.0.0', false], ['1.1.0', true]]);
+});
+
+test('buildReleaseCreateArgs pins --latest; parseReleaseTags reads gh output', () => {
+  assert.ok(buildReleaseCreateArgs({ tag: 't', latest: true }).includes('--latest'));
+  assert.ok(buildReleaseCreateArgs({ tag: 't', latest: false }).includes('--latest=false'));
+  assert.ok(!buildReleaseCreateArgs({ tag: 't' }).some((a) => a.startsWith('--latest')));
+  assert.deepEqual(parseReleaseTags('[{"tagName":"1.0.0"},{"tagName":"v2"}]'), ['1.0.0', 'v2']);
+  assert.deepEqual(parseReleaseTags('nope'), []);
 });
 
 // --- standup ----------------------------------------------------------------

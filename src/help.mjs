@@ -239,13 +239,18 @@ export const TOPICS = {
       ['--from <ref>', 'Use this ref as the base instead of the last tag.'],
       ['--branch <ref>', 'Target to compare (default HEAD).'],
       ['--apply', 'Write the new version into package.json (not committed).'],
-      ['--tag', 'Create a local annotated tag with the same prefix style as the last tag (not pushed).'],
+      ['--tag', 'Create a local annotated tag with the same prefix style as the last tag (not pushed unless --push).'],
+      ['--push', 'With --tag, push that tag to origin (only the tag, never forced).'],
+      ['--github', 'With --tag --push, also create the GitHub Release for that tag (notes = its changelog section; needs gh; --draft and --as-bot apply).'],
+      ['--json', 'Print the result as JSON (current, level, breaking, next, tag, reasons) for CI; tag is null when nothing is releasable. Changes nothing.'],
     ],
     examples: [
       ['commitsmith --bump', 'show the suggestion and why'],
       ['commitsmith --bump --apply --tag', 'update package.json and tag it'],
+      ['commitsmith --bump --tag --push', 'create the tag and push it to origin'],
+      ['commitsmith --bump --tag --push --github', 'tag, push and publish the GitHub Release'],
     ],
-    notes: ['Nothing is committed or pushed.'],
+    notes: ['Nothing is committed; nothing is pushed unless you pass --tag --push.'],
     see: ['changelog', 'release-notes'],
   },
 
@@ -298,6 +303,28 @@ export const TOPICS = {
     ],
     notes: ['If your repository already tags releases in CI (for example on every merge to main), use --bump or --changelog instead so the two do not collide.', 'Offline unless --push or --github is used; no model is called.'],
     see: ['bump', 'changelog', 'release-notes'],
+  },
+
+  'release-tags': {
+    group: 'Versioning and releases',
+    label: '--release-tags',
+    summary: 'publish GitHub Releases for tags that have none',
+    usage: ['commitsmith --release-tags [--all] [--branch <ref>] [--draft] [--as-bot] [-y]'],
+    description:
+      'Creates GitHub Releases from your tags — the follow-up to `--bump --tag --push`. Each release body is that tag’s changelog section (breaking changes first), built from git history; no model is called. By default it publishes the newest tag if it has no release yet. A preview until you confirm or pass -y.',
+    options: [
+      ['--all', 'Backfill: create a release for every tag that has none, oldest first. Only the newest, non-pre-release one is marked "latest".'],
+      ['--branch <ref>', 'Look at the tags reachable from this ref instead of HEAD.'],
+      ['--draft', 'Create the releases as drafts. Versions with a prerelease part are marked as pre-releases automatically.'],
+      ['--as-bot', 'Create them as your GitHub App bot (see: help init github).'],
+      ['-y', 'Create them without asking.'],
+    ],
+    examples: [
+      ['commitsmith --bump --tag --push && commitsmith --release-tags -y', 'tag, push and publish'],
+      ['commitsmith --release-tags --all', 'preview a backfill of every tag without a release'],
+    ],
+    notes: ['Needs the gh CLI. Only tags already on origin qualify (the release is created with --verify-tag); unpushed ones are listed with the push command.'],
+    see: ['bump', 'release', 'changelog'],
   },
 
   standup: {
@@ -475,6 +502,7 @@ const FLAG_TOPICS = {
   '--push': 'release',
   '--github': 'release',
   '--standup': 'standup',
+  '--release-tags': 'release-tags',
   '--review': 'review',
   '--breaking': 'breaking',
   '--check': 'check',

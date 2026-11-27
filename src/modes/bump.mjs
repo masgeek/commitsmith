@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import chalk from 'chalk';
-import { getCommitsDetailed, getLastTag, resolveCommit } from '../git.mjs';
+import { getCommitsDetailed, getLastTag, resolveCommit, pushRefs } from '../git.mjs';
 import { computeBump, bumpVersion, parseVersionTag } from '../conventional.mjs';
-import { releaseNotesFromRef, releaseNotesBranch, bumpApply, bumpTag } from '../cli-args.mjs';
+import { releaseNotesFromRef, releaseNotesBranch, bumpApply, bumpTag, bumpJson, releasePush, releaseGithub } from '../cli-args.mjs';
+import { resolveGhToken, publishTagRelease } from './release-tags.mjs';
 import { die } from '../die.mjs';
 
 /** Current version from package.json text, or null. */
@@ -54,7 +55,22 @@ export function resolveRelease() {
   return { baseRef, targetRef, commits, current, prefix: tagInfo?.prefix ?? '', level, reasons, next: bumpVersion(current, level), pkgText };
 }
 
-const describe = (c) => `${c.breaking ? '💥 ' : ''}${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.description}${c.sha ? ` (${c.sha.slice(0, 7)})` : ''}`;
+/** Machine-readable view of a resolved release (for CI): tag/next are null when nothing is releasable. */
+export function bumpSummary(r) {
+  const releasable = r.commits.length > 0 && r.level !== 'none';
+  return {
+    current: r.current,
+    base: r.baseRef ?? null,
+    commits: r.commits.length,
+    level: releasable ? r.level : 'none',
+    breaking: releasable && r.level === 'major',
+    next: releasable ? r.next : null,
+    tag: releasable ? `${r.prefix}${r.next}` : null,
+    reasons: r.reasons.map((c) => ({ type: c.type, scope: c.scope, description: c.description, breaking: c.breaking, sha: c.sha })),
+  };
+}
+
+const describe =(c) => `${c.breaking ? '💥 ' : ''}${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.description}${c.sha ? ` (${c.sha.slice(0, 7)})` : ''}`;
 
 /**
  * `--bump [--from <ref>] [--branch <ref>] [--apply] [--tag]`: suggests the next
@@ -63,9 +79,10 @@ const describe = (c) => `${c.breaking ? '💥 ' : ''}${c.type}${c.scope ? `(${c.
  * none). Offline and read-only unless asked: `--apply` writes the version into
  * package.json, `--tag` creates a local annotated tag. Never commits or pushes.
  */
-export function runBumpMode() {
+export async function runBumpMode() {
   const r = resolveRelease();
-  const since = r.baseRef ? `since ${r.baseRef}` : '(no tags yet — whole history)';
+  if (bumpJson) return console.log(JSON.stringify(bumpSummary(r), null, 2));
+  const since =r.baseRef ? `since ${r.baseRef}` : '(no tags yet — whole history)';
 
   console.log(`Current version: ${r.current}${r.baseRef ? ` (from ${r.baseRef})` : ''}`);
   console.log(`Commits ${since}: ${r.commits.length}\n`);
@@ -84,10 +101,15 @@ export function runBumpMode() {
   r.reasons.slice(0, 8).forEach((c) => console.log(`  ${describe(c)}`));
   if (r.reasons.length > 8) console.log(`  …and ${r.reasons.length - 8} more`);
 
+  if (releasePush && !bumpTag) die('--push needs --tag: it pushes the tag that --bump --tag creates.');
+  if (releaseGithub && !(bumpTag && releasePush)) die('--github needs --tag --push: the GitHub Release is created for the tag you just pushed.');
   if (!bumpApply && !bumpTag) {
     console.log('\nRun again with --apply to write it into package.json, and/or --tag to create the git tag.');
     return;
   }
+
+  // Check gh and the bot token before changing anything, so a missing login can't leave a half-done release.
+  const ghToken = releaseGithub ? await resolveGhToken() : null;
 
   if (bumpApply) {
     if (!r.pkgText) die('--apply needs a package.json in the current directory.');
@@ -104,6 +126,18 @@ export function runBumpMode() {
     } catch {
       die(`Could not create the tag "${tag}".`);
     }
-    console.log(`\nCreated local tag ${tag} (not pushed). Push it with: git push origin ${tag}`);
+    if (releasePush) {
+      pushRefs([`refs/tags/${tag}`]); // only the tag, never forced
+      console.log(`\nCreated tag ${tag} and pushed it to origin.`);
+      if (releaseGithub) {
+        try {
+          console.log(chalk.green(`✔ GitHub Release: ${publishTagRelease({ tag, token: ghToken })}`));
+        } catch (err) {
+          die(`The tag is pushed but creating the GitHub Release failed: ${err.message}. Retry with: commitsmith --release-tags -y`);
+        }
+      }
+    } else {
+      console.log(`\nCreated local tag ${tag} (not pushed). Push it with: git push origin ${tag}  (or re-run with --tag --push)`);
+    }
   }
 }
