@@ -5,7 +5,7 @@ import { buildGroupingPrompt } from '../prompts.mjs';
 import { parseGroupingResult } from '../parsing.mjs';
 import { callModel } from '../providers/index.mjs';
 import { confirmWithEdit } from '../ui.mjs';
-import { generateMessageForDiffText, addBreakingFooterIfNeeded } from '../generate.mjs';
+import { generateMessageForDiffText, addBreakingFooterIfNeeded, addTicketFooter, getEffectiveRules } from '../generate.mjs';
 import { shouldCommit, autoYes, breakingDetectionEnabled } from '../cli-args.mjs';
 import { isInteractive } from '../tty.mjs';
 import { printGroups, reviewGroups } from './group-review.mjs';
@@ -25,6 +25,7 @@ import { runStrictSplitMode } from './split.mjs';
  */
 export async function runGroupedCommitFlow(files) {
   const { GROUP_MAX_DIFF_PER_FILE } = await loadConfig();
+  const rules = await getEffectiveRules();
   const fileEntries = files.map((path) => ({
     path,
     diff: truncateDiff(getStagedDiff(path), GROUP_MAX_DIFF_PER_FILE),
@@ -32,22 +33,24 @@ export async function runGroupedCommitFlow(files) {
 
   let raw;
   try {
-    raw = await callModel(buildGroupingPrompt(fileEntries), `grouping for ${files.length} staged files`);
+    raw = await callModel(buildGroupingPrompt(fileEntries, rules), `grouping for ${files.length} staged files`);
   } catch (err) {
     die(err.message);
   }
 
-  let groups = parseGroupingResult(raw, files, breakingDetectionEnabled);
+  let groups = parseGroupingResult(raw, files, breakingDetectionEnabled, rules);
   if (!groups) return false;
 
   // The grouping prompt judges breaking changes only in passing; give each
   // not-yet-flagged group the focused review so its footer isn't missed.
   const { MAX_DIFF } = await loadConfig();
   for (const g of groups) {
-    if (g.breaking) continue;
-    const reviewed = await addBreakingFooterIfNeeded(g.message, truncateDiff(getStagedDiff(g.files), MAX_DIFF), g.files.join(', '));
-    g.message = reviewed.message;
-    g.breaking = reviewed.breaking;
+    if (!g.breaking) {
+      const reviewed = await addBreakingFooterIfNeeded(g.message, truncateDiff(getStagedDiff(g.files), MAX_DIFF), g.files.join(', '));
+      g.message = reviewed.message;
+      g.breaking = reviewed.breaking;
+    }
+    g.message = await addTicketFooter(g.message); // "Refs: ABC-123" from the branch name
   }
 
   console.log(`\nDetected ${groups.length} logical group(s):\n`);

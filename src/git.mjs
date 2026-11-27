@@ -1,5 +1,7 @@
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { die } from './die.mjs';
+import { sortVersionTags } from './conventional.mjs';
 
 export function assertGitRepo() {
   try {
@@ -326,5 +328,317 @@ export function isBranchPushed(branch) {
     return execFileSync('git', ['rev-list', '--count', `${upstream}..${branch}`], GIT_QUIET).trim() === '0';
   } catch {
     return false;
+  }
+}
+
+/** URL of a remote (default origin), or null when it doesn't exist. */
+export function getRemoteUrl(name = 'origin') {
+  try {
+    return execFileSync('git', ['remote', 'get-url', name], GIT_QUIET).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Non-merge commits as { sha, subject, body }[], newest first. With a base ref
+ * it is baseRef..targetRef; with `null` it is the whole history up to targetRef
+ * (a repo with no tags yet) — used by --bump and --changelog.
+ */
+export function getCommitsDetailed(baseRef, targetRef = 'HEAD') {
+  let out;
+  try {
+    out = execFileSync('git', ['log', '--no-merges', '--format=%H%x1f%s%x1f%b%x1e', baseRef ? `${baseRef}..${targetRef}` : targetRef], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 50,
+    });
+  } catch {
+    die(baseRef ? `Could not read commits between "${baseRef}" and "${targetRef}".` : `Could not read the history of "${targetRef}".`);
+  }
+  return out
+    .split('\x1e')
+    .map((e) => e.trim())
+    .filter(Boolean)
+    .map((e) => {
+      const [sha, subject = '', body = ''] = e.split('\x1f');
+      return { sha: sha.trim(), subject: subject.trim(), body: body.trim() };
+    });
+}
+
+/** Staged diff if anything is staged, else the unstaged diff; null when neither has changes. */
+export function getWorkingDiffPreferStaged() {
+  if (getStagedFiles().length > 0) return { source: 'staged changes', diff: getStagedDiff(null) };
+  const diff = getWorkingTreeDiff();
+  return diff.trim() ? { source: 'unstaged working-tree changes', diff } : null;
+}
+
+/** Absolute path of the repository's hooks directory (honors core.hooksPath and worktrees). */
+export function getHooksDir() {
+  try {
+    return path.resolve(process.cwd(), execFileSync('git', ['rev-parse', '--git-path', 'hooks'], GIT_QUIET).trim());
+  } catch {
+    return die('Could not locate the git hooks directory.');
+  }
+}
+
+/** True when the commit is already contained in a remote-tracking branch (amending it would rewrite published history). */
+export function isCommitPublished(ref = 'HEAD') {
+  try {
+    return execFileSync('git', ['branch', '-r', '--contains', ref], GIT_QUIET).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Rewrites only the message of HEAD (`git commit --amend -m`); the caller must ensure nothing is staged. */
+export function amendCommitMessage(message) {
+  try {
+    execFileSync('git', ['commit', '--amend', '-m', message], { stdio: 'inherit' });
+  } catch {
+    die('git commit --amend failed.');
+  }
+}
+
+/**
+ * Semver tags reachable from `targetRef`, newest version first, as
+ * { tag, version, date } (date = the tag's creation date, YYYY-MM-DD).
+ * Non-semver tags are ignored.
+ */
+export function listVersionTags(targetRef = 'HEAD') {
+  let out;
+  try {
+    out = execFileSync('git', ['for-each-ref', `--merged=${targetRef}`, '--format=%(refname:short)%09%(creatordate:short)', 'refs/tags'], GIT_QUIET);
+  } catch {
+    return [];
+  }
+  return sortVersionTags(
+    out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [tag, date = ''] = line.split('\t');
+        return { tag, date };
+      })
+  );
+}
+
+/** True when `ancestor` is reachable from `descendant` (and they are different commits). */
+export function isStrictAncestor(ancestor, descendant) {
+  const a = resolveCommit(ancestor);
+  const d = resolveCommit(descendant);
+  if (!a || !d || a === d) return false;
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', a, d], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const BIG = { encoding: 'utf8', maxBuffer: 1024 * 1024 * 50, stdio: ['ignore', 'pipe', 'ignore'] };
+
+/** Subjects of the last `n` non-merge commits on HEAD, newest first ([] in an empty repo). */
+export function getRecentSubjects(n = 30) {
+  try {
+    return execFileSync('git', ['log', `-${Number(n) || 30}`, '--no-merges', '--format=%s'], BIG).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** `git diff --staged --numstat` text ('' on failure). */
+export function getStagedNumstat() {
+  try {
+    return execFileSync('git', ['diff', '--staged', '--numstat'], BIG);
+  } catch {
+    return '';
+  }
+}
+
+/** Zero-context staged diff (just the hunk headers matter), used to find which old lines a change touches. */
+export function getStagedZeroContextDiff() {
+  try {
+    return execFileSync('git', ['diff', '--staged', '-U0', '--no-color', '--no-renames'], BIG);
+  } catch {
+    return '';
+  }
+}
+
+/** `git blame --porcelain` of `count` lines of `file` at HEAD, starting at line `start` ('' when it can't be blamed). */
+export function blameRange(file, start, count) {
+  try {
+    return execFileSync('git', ['blame', '--porcelain', '-L', `${start},${start + count - 1}`, 'HEAD', '--', file], BIG);
+  } catch {
+    return '';
+  }
+}
+
+/** { sha, subject }[] for non-merge commits in baseRef..HEAD (the whole history when baseRef is null), newest first. */
+export function listCommitsBrief(baseRef) {
+  const range = baseRef ? `${baseRef}..HEAD` : 'HEAD';
+  try {
+    return execFileSync('git', ['log', '--no-merges', '--format=%H%x1f%s', range], BIG)
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [sha, subject = ''] = l.split('\x1f');
+        return { sha, subject };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** user.email from git config, or ''. */
+export function getUserEmail() {
+  try {
+    return execFileSync('git', ['config', 'user.email'], BIG).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Non-merge commits since a date spec git understands ("yesterday", "3 days
+ * ago", "2026-01-01"), as { sha, subject, body }[] newest first. `author`
+ * filters by name/email substring; `allBranches` includes every local branch.
+ */
+export function getCommitsSince({ since, author = '', allBranches = false }) {
+  const args = ['log', '--no-merges', `--since=${since}`, '--format=%H%x1f%s%x1f%b%x1e'];
+  if (author) args.push(`--author=${author}`, '--regexp-ignore-case', '--fixed-strings');
+  if (allBranches) args.push('--branches');
+  try {
+    return execFileSync('git', args, BIG)
+      .split('\x1e')
+      .map((e) => e.trim())
+      .filter(Boolean)
+      .map((e) => {
+        const [sha, subject = '', body = ''] = e.split('\x1f');
+        return { sha: sha.trim(), subject: subject.trim(), body: body.trim() };
+      });
+  } catch {
+    return die(`Could not read the history since "${since}".`);
+  }
+}
+
+/** Parents, authorship, tree and full message of every commit in baseRef..HEAD, oldest first (for rewriting). */
+export function getCommitsForRewrite(baseRef) {
+  const fmt = ['%H', '%P', '%an', '%ae', '%aI', '%cn', '%ce', '%cI', '%T', '%B'].join('%x1f') + '%x1e';
+  let out;
+  try {
+    out = execFileSync('git', ['log', '--reverse', `--format=${fmt}`, `${baseRef}..HEAD`], BIG);
+  } catch {
+    return die(`Could not read the commits in ${baseRef}..HEAD.`);
+  }
+  return out
+    .split('\x1e')
+    .map((e) => e.replace(/^\n/, ''))
+    .filter((e) => e.trim())
+    .map((e) => {
+      const [sha, parents, an, ae, ad, cn, ce, cd, tree, message = ''] = e.split('\x1f');
+      return {
+        sha,
+        parents: parents.split(' ').filter(Boolean),
+        author: { name: an, email: ae, date: ad },
+        committer: { name: cn, email: ce, date: cd },
+        tree,
+        message: message.replace(/\s+$/, ''),
+      };
+    });
+}
+
+/**
+ * Rewrites the messages of a linear run of commits (oldest first) without a
+ * rebase: each commit is re-created with `git commit-tree` on the same tree,
+ * parent chain and author/committer, so file contents never change — only the
+ * messages and therefore the hashes. `messages` maps old sha → new message.
+ * Returns the new tip sha.
+ */
+export function rewriteMessages(commits, messages, baseSha) {
+  let parent = baseSha;
+  for (const c of commits) {
+    const message = messages.get(c.sha) ?? c.message;
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: c.author.name,
+      GIT_AUTHOR_EMAIL: c.author.email,
+      GIT_AUTHOR_DATE: c.author.date,
+      GIT_COMMITTER_NAME: c.committer.name,
+      GIT_COMMITTER_EMAIL: c.committer.email,
+      GIT_COMMITTER_DATE: c.committer.date,
+    };
+    try {
+      parent = execFileSync('git', ['commit-tree', c.tree, ...(parent ? ['-p', parent] : []), '-F', '-'], {
+        input: `${message}\n`,
+        encoding: 'utf8',
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch (err) {
+      return die(`git commit-tree failed: ${(err.stderr ? err.stderr.toString().trim() : '') || err.message}`);
+    }
+  }
+  return parent;
+}
+
+/** Moves a branch to `newSha` only if it still points at `oldSha` (compare-and-swap), after saving `oldSha` under a backup ref. */
+export function moveBranchSafely(branch, oldSha, newSha, backupRef) {
+  try {
+    execFileSync('git', ['update-ref', backupRef, oldSha], { stdio: 'ignore' });
+    execFileSync('git', ['update-ref', '-m', 'commitsmith: reword', `refs/heads/${branch}`, newSha, oldSha], { stdio: 'ignore' });
+  } catch {
+    die(`Could not update ${branch} (it moved while rewording?). Nothing was changed except the backup ref ${backupRef}.`);
+  }
+}
+
+/** True when the working tree has uncommitted changes to tracked files. */
+export function hasTrackedChanges() {
+  try {
+    return execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], BIG).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** `git commit --fixup=<sha>` for the staged changes. */
+export function commitFixup(sha) {
+  try {
+    execFileSync('git', ['commit', `--fixup=${sha}`], { stdio: 'inherit' });
+  } catch {
+    die('git commit --fixup failed.');
+  }
+}
+
+/** Folds fixup!/squash! commits into their targets: a non-interactive `rebase -i --autosquash` from just before `sha`. */
+export function autosquashFrom(sha) {
+  const hasParent = Boolean(resolveCommit(`${sha}^`));
+  try {
+    execFileSync('git', ['rebase', '-i', '--autosquash', '--autostash', ...(hasParent ? [`${sha}^`] : ['--root'])], {
+      stdio: 'inherit',
+      env: { ...process.env, GIT_SEQUENCE_EDITOR: 'true' },
+    });
+  } catch {
+    die('The autosquash rebase stopped (conflict?). Resolve it with `git rebase --continue`, or undo with `git rebase --abort`.');
+  }
+}
+
+/** Tag names that exist on origin (empty when there is no reachable remote). */
+export function listRemoteTags() {
+  try {
+    return execFileSync('git', ['ls-remote', '--tags', '--refs', 'origin'], BIG)
+      .split('\n')
+      .map((l) => l.split('\trefs/tags/')[1])
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Pushes the current branch and/or a tag to origin (never forced). */
+export function pushRefs(refs) {
+  try {
+    execFileSync('git', ['push', 'origin', ...refs], { stdio: 'inherit' });
+  } catch {
+    die(`git push origin ${refs.join(' ')} failed.`);
   }
 }

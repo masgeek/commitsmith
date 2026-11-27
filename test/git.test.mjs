@@ -160,3 +160,55 @@ test('getCurrentBranch / getDefaultBranch / getBranchDiff in a throwaway repo', 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('changelog from real tags: unreleased first, then every tag newest to oldest with its own commits', async () => {
+  const { listVersionTags, getCommitsDetailed } = await import('../src/git.mjs');
+  const { buildChangelogSections } = await import('../src/modes/changelog.mjs');
+  const { dir, git, commit } = makeRepo();
+  const prevCwd = process.cwd();
+  try {
+    commit('a.txt', '1', '✨ feat: first');
+    git('tag', '-a', '1.0.0', '-m', '1.0.0');
+    commit('b.txt', '2', '🐛 fix: second');
+    git('tag', 'v1.1.0'); // lightweight, "v" prefix
+    git('tag', 'nightly'); // not semver: ignored
+    commit('c.txt', '3', '✨ feat(api): third');
+    commit('d.txt', '4', '🔧 chore: fourth');
+    process.chdir(dir);
+
+    const tags = listVersionTags('HEAD');
+    assert.deepEqual(tags.map((t) => t.tag), ['v1.1.0', '1.0.0']);
+    assert.match(tags[0].date, /^\d{4}-\d{2}-\d{2}$/);
+
+    const sections = buildChangelogSections({
+      tags,
+      commitsFor: (base, tag) => getCommitsDetailed(base, tag ?? 'HEAD'),
+      today: '2026-11-26',
+    });
+    assert.deepEqual(sections.map((s) => s.version), [null, '1.1.0', '1.0.0']);
+    assert.match(sections[0].markdown, /^## \[Unreleased\]/);
+    assert.match(sections[0].markdown, /third/);
+    assert.doesNotMatch(sections[0].markdown, /fourth/); // chore hidden by default
+    assert.match(sections[1].markdown, /second/);
+    assert.doesNotMatch(sections[1].markdown, /first|third/);
+    assert.match(sections[2].markdown, /first/);
+
+    // --from limits history to what came after that ref (here: only changes after 1.0.0)
+    const fromSections = buildChangelogSections({
+      tags,
+      from: '1.0.0',
+      commitsFor: (base, tag) => getCommitsDetailed(base, tag ?? 'HEAD'),
+      today: '2026-11-26',
+    });
+    assert.deepEqual(fromSections.map((s) => s.version), [null, '1.1.0']);
+    assert.doesNotMatch(fromSections.map((s) => s.markdown).join('\n'), /first/);
+
+    // with no tags at all, everything is unreleased
+    const none = buildChangelogSections({ tags: [], commitsFor: (base, tag) => getCommitsDetailed(base, tag ?? 'HEAD'), today: 'd' });
+    assert.equal(none.length, 1);
+    assert.match(none[0].markdown, /first/);
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
