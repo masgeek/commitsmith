@@ -490,6 +490,8 @@ Both work offline from your git history; neither calls a model.
 commitsmith --bump                 # current 1.0.4, suggested minor → 1.1.0, and why
 commitsmith --bump --apply         # write the version into package.json (not committed)
 commitsmith --bump --tag           # create a local annotated tag (not pushed)
+commitsmith --bump --tag --push    # create the tag and push it to origin (tag only, never forced)
+commitsmith --bump --tag --push --github   # …and publish the GitHub Release for it (needs gh)
 
 commitsmith --changelog            # create or refresh CHANGELOG.md: unreleased + every tag
 commitsmith --changelog --release-version 1.1.0   # cut a release: [Unreleased] becomes [1.1.0]
@@ -547,6 +549,21 @@ with a prerelease part are marked as pre-releases). It is a **preview** until yo
 in a terminal or pass `-y`, and it refuses to start with uncommitted changes. No model is
 called. If your repository already tags releases in CI on every merge, use `--bump` or
 `--changelog` instead so the two don't collide.
+
+### Releases from tags (`--release-tags`)
+
+```bash
+commitsmith --bump --tag --push      # tag from the commits and push the tag
+commitsmith --release-tags -y        # publish a GitHub Release for the newest tag
+commitsmith --release-tags --all     # preview a backfill: every tag without a release
+```
+
+Publishes GitHub Releases (via `gh`) for tags that have none. Each body is that tag's
+changelog section, breaking changes first — built from git history, no model. By default
+only the newest tag is published, and only if it has no release; `--all` backfills every
+tag without one, oldest first, marking just the newest non-pre-release as "latest". Only
+tags already on `origin` qualify (the release is created with `--verify-tag`); `--draft`
+and `--as-bot` work as for `--release`. A preview until you confirm or pass `-y`.
 
 ### `--fixup` and `--reword`
 
@@ -626,6 +643,44 @@ jobs:
 Rules come from the repository's `.commitsmithrc.json` (`commitRules`). Other inputs:
 `base` (defaults to the pull request's base commit), `lint-commits`, `version`,
 `node-version`, `model`.
+
+#### Release action (`masgeek/commitsmith/release`)
+
+A second, independent action releases any project from its conventional commits — it
+decides the version (`--bump`), writes the notes (`--changelog`), pushes the tag and
+creates the GitHub Release. Offline, no model, no other tag/release actions needed:
+
+```yaml
+# .github/workflows/release.yml
+name: Release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: masgeek/commitsmith/release@main   # pin a tag or SHA in real projects
+```
+
+| Input | Default | |
+|---|---|---|
+| `token` | `github.token` | Pushes the tag and creates the release. Releases made with the default token don't trigger other workflows — pass a GitHub App or PAT token if a publish workflow should start. |
+| `dry-run` | `false` | Work out the version and notes (outputs, job summary) but tag and release nothing. |
+| `draft` | `false` | Create the release as a draft. |
+| `title-prefix` | `Version ` | Release title = prefix + tag. |
+| `version` | `latest` | commitsmith version to run (npm version or dist-tag). |
+| `cli` | — | Run this command instead of the npm package, e.g. `node commitsmith.mjs`. |
+| `setup-node`, `node-version` | `true`, `22` | Install Node first (set `setup-node: false` if the job already did). |
+
+Outputs: `released`, `tag`, `level` (`major`/`minor`/`patch`/`none`), `breaking`, `notes-file`
+— so later steps can react, e.g. `if: steps.release.outputs.released == 'true'`. The action
+fetches full history and tags itself. Nothing is released when only docs, tests, CI,
+style or chore commits landed. Tags keep the prefix of the previous tag (`v` or none).
+This repository releases itself with it (`.github/workflows/bump-version.yml`).
 
 ### Git hooks
 
@@ -996,9 +1051,13 @@ Versions are unprefixed (`1.0.0`, not `v1.0.0`) — `tag_prefix: ""` in
 a `node commitsmith.mjs --help` smoke test, `package.json` validation,
 `pnpm audit --production`, and `pnpm pack`.
 
-When CI succeeds on `main`, `.github/workflows/bump-version.yml` creates a
-semver tag and a GitHub Release — but only if `src/` or `package.json` changed
-since the previous tag. When the release is published,
+When CI succeeds on `main`, `.github/workflows/bump-version.yml` releases the
+project with its own tool: `commitsmith --bump --json` decides the version from the
+commits since the last tag (a breaking change — 💥, `type!:` or a `BREAKING CHANGE:`
+footer — means major, `feat` minor, `fix` and other code changes patch; only
+docs/test/ci/style/chore means no release), `--changelog` writes the release notes,
+and the workflow pushes the tag and creates the GitHub Release. Nothing is
+released when no commit calls for a version. When the release is published,
 `.github/workflows/publish-npm.yml` pins `package.json` to that tag in the CI
 checkout (so the committed version doesn't have to match), runs `pnpm test`
 plus the `--help` smoke test, then stages the publish with
