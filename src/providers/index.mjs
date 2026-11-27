@@ -1,6 +1,8 @@
 import ora from 'ora';
 import { loadConfig } from '../config.mjs';
 import { die } from '../die.mjs';
+import { guardPrompt } from '../secret-guard.mjs';
+import { noSecretGuard } from '../cli-args.mjs';
 import { callOllamaOnce, callOllamaCloudOnce } from './ollama.mjs';
 import { callOpenAiOnce } from './openai.mjs';
 import { callAnthropicOnce } from './anthropic.mjs';
@@ -18,8 +20,10 @@ async function callModelOnce(prompt, model, spinner) {
  * COMMITSMITH_FALLBACK_MODELS (in order, same provider) if the primary model
  * fails or times out.
  */
-export async function callModel(prompt, label = 'response') {
-  const { MODEL, FALLBACK_MODELS } = await loadConfig();
+export async function callModel(rawPrompt, label = 'response') {
+  const { MODEL, FALLBACK_MODELS, SECRET_GUARD } = await loadConfig();
+  // Every model request passes through here, so this is the one place secrets are kept out of prompts.
+  const { prompt } = guardPrompt(rawPrompt, noSecretGuard ? 'off' : SECRET_GUARD);
   const modelsToTry = [MODEL, ...FALLBACK_MODELS];
   const spinner = ora(`Generating ${label} with ${MODEL}...`).start();
 
@@ -39,24 +43,32 @@ export async function callModel(prompt, label = 'response') {
   throw lastErr;
 }
 
-export async function assertProviderReachable() {
+/**
+ * Checks the configured provider without exiting: { ok: true } or
+ * { ok: false, message }. Cloud providers (openai, anthropic) only need an
+ * API key here; Ollama and Ollama Cloud are probed over the network.
+ */
+export async function probeProvider() {
   const { PROVIDER, API_KEY, HOST } = await loadConfig();
 
   if (PROVIDER === 'openai' || PROVIDER === 'anthropic') {
-    if (!API_KEY) {
-      die(
-        `COMMITSMITH_API_KEY (or config "apiKey") is required for provider "${PROVIDER}".\n` +
-          `Set COMMITSMITH_PROVIDER=ollama to use a local Ollama model instead.`
-      );
-    }
-    return;
+    return API_KEY
+      ? { ok: true }
+      : {
+          ok: false,
+          message:
+            `COMMITSMITH_API_KEY (or config "apiKey") is required for provider "${PROVIDER}".\n` +
+            `Set COMMITSMITH_PROVIDER=ollama to use a local Ollama model instead.`,
+        };
   }
 
   if (PROVIDER === 'ollama-cloud' && !API_KEY) {
-    die(
-      `COMMITSMITH_API_KEY (or config "apiKey") is required for provider "ollama-cloud".\n` +
-        `Get one from https://ollama.com/settings/keys.`
-    );
+    return {
+      ok: false,
+      message:
+        `COMMITSMITH_API_KEY (or config "apiKey") is required for provider "ollama-cloud".\n` +
+        `Get one from https://ollama.com/settings/keys.`,
+    };
   }
 
   try {
@@ -66,13 +78,21 @@ export async function assertProviderReachable() {
     const res = await fetch(`${HOST}/api/tags`, { signal: controller.signal, headers });
     clearTimeout(t);
     if (!res.ok) throw new Error(`status ${res.status}`);
+    return { ok: true };
   } catch (err) {
-    die(
-      PROVIDER === 'ollama-cloud'
-        ? `Cannot reach Ollama Cloud at ${HOST} (${err.message || err}). Check COMMITSMITH_API_KEY and your network connection.`
-        : `Cannot reach Ollama at ${HOST} (${err.message || err}).\n` +
+    return {
+      ok: false,
+      message:
+        PROVIDER === 'ollama-cloud'
+          ? `Cannot reach Ollama Cloud at ${HOST} (${err.message || err}). Check COMMITSMITH_API_KEY and your network connection.`
+          : `Cannot reach Ollama at ${HOST} (${err.message || err}).\n` +
             `Is it running? Try: ollama serve\n` +
-            `Or set COMMITSMITH_HOST if it's on a different address, or COMMITSMITH_PROVIDER=openai/anthropic/ollama-cloud to use a cloud provider instead.`
-    );
+            `Or set COMMITSMITH_HOST if it's on a different address, or COMMITSMITH_PROVIDER=openai/anthropic/ollama-cloud to use a cloud provider instead.`,
+    };
   }
+}
+
+export async function assertProviderReachable() {
+  const result = await probeProvider();
+  if (!result.ok) die(result.message);
 }

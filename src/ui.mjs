@@ -15,51 +15,6 @@ export function printVersion() {
   console.log(`${name} v${version}`);
 }
 
-export function printHelp() {
-  console.log(`commitsmith — commit message generator backed by a local or cloud model
-
-Usage:
-  commitsmith init                   interactive setup — choose a provider/model and write a config file
-  commitsmith init github            set up opening PRs as a GitHub App bot (App ID + private key file; verified, then saved)
-  commitsmith use                    quick-switch to an already-configured provider (no full re-init)
-  commitsmith                        print message for all staged changes
-  commitsmith --commit               generate + confirm + commit
-  commitsmith -y                     generate + commit, no confirmation
-  commitsmith --split [--commit|-y]  merge related staged files into one commit each,
-                                   one commit per file for everything else
-  commitsmith --split --no-group-detection  strict one commit per staged file
-  commitsmith --split-hunks [...]    one commit per logical diff hunk
-  commitsmith --split-hunks --dry-run  preview hunks/messages, no staging or commits
-  commitsmith --group [--commit|-y]  same relatedness detection as --split
-  commitsmith --check                re-classify HEAD's diff, warn if its message looks inconsistent
-  commitsmith --check --from <ref> [--branch <ref>]
-                                   scan every commit in the range (e.g. since a tag); exit 1 if any looks off
-  commitsmith --breaking [--from <ref> [--branch <ref>]]
-                                   dry run: detect breaking changes in staged (else unstaged) changes or a range,
-                                   print findings + a BREAKING CHANGE footer; exit 1 if any, writes nothing
-  commitsmith --pr [--base <branch>] [--create|-y] [--draft] [--as-bot]
-                                   generate a PR title + description from the branch's commits (breaking changes
-                                   included); preview by default, --create pushes the branch and opens it via gh
-                                   --as-bot opens it as a bot (COMMITSMITH_GH_TOKEN, or a GitHub App:
-                                   COMMITSMITH_GH_APP_ID + COMMITSMITH_GH_APP_KEY_PATH)
-  commitsmith --release-notes [--from <ref>] [--branch <ref>] [--max-chars <n>] [--copy]
-                                   print user-facing release notes (bullets on stdout)
-                                   base = --from or last tag reachable from the target; target = HEAD or --branch
-                                   --max-chars drops trailing bullets to fit (Play Store: 500); --copy → clipboard
-                                   --store play|app-store|github  limit preset   --lang fr,sw  extra languages
-                                   --output <file>  save to a file (in a terminal you get a pick/review/edit flow)
-  commitsmith --no-breaking-detection  skip breaking-change classification
-  commitsmith --no-interactive       never show prompts (automatic when piped or CI is set); --interactive forces them on a TTY
-  commitsmith --help                 show this help
-  commitsmith --version              print the installed version
-
-At any confirmation prompt, answer "e" to edit the message in $GIT_EDITOR/$EDITOR before committing.
-
-Providers: COMMITSMITH_PROVIDER=ollama (default) | ollama-cloud | openai | anthropic
-Env vars: COMMITSMITH_MODEL, COMMITSMITH_HOST, COMMITSMITH_API_KEY, COMMITSMITH_MAX_DIFF, COMMITSMITH_TIMEOUT_MS, COMMITSMITH_FALLBACK_MODELS
-Config file: cosmiconfig-style "commitsmith" config (.commitsmithrc.json, "commitsmith" key in package.json, etc.)`);
-}
-
 /** Open `message` in $GIT_EDITOR/$EDITOR for editing; returns the edited text, or the original if the editor fails or leaves it empty. */
 export function editMessageInEditor(message) {
   const editor = process.env.GIT_EDITOR || process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');

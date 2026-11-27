@@ -16,6 +16,7 @@ import { resolveBotToken } from '../github-auth.mjs';
 import { buildPullRequestPrompt } from '../prompts.mjs';
 import { parsePullRequest, extractBreakingNotes, formatPullRequestBody, formatCommitsForPrompt } from '../parsing.mjs';
 import { BREAKING_GITMOJI } from '../constants.mjs';
+import { extractTicket } from '../tickets.mjs';
 import { callModel } from '../providers/index.mjs';
 import { copyToClipboard } from '../clipboard.mjs';
 import { editMessageInEditor } from '../ui.mjs';
@@ -41,7 +42,7 @@ export function withBreakingPrefix(title, breaking) {
  * network — so cli.mjs can fail fast before the provider check.
  */
 export async function preparePullRequest() {
-  const { MAX_DIFF, GITHUB_BOT } = await loadConfig();
+  const { MAX_DIFF, GITHUB_BOT, TICKETS } = await loadConfig();
 
   const head = getCurrentBranch();
   if (!head) die('Detached HEAD: check out the branch you want to open a pull request from.');
@@ -72,10 +73,14 @@ export async function preparePullRequest() {
   // Quietly null when gh is missing; creating will report that properly.
   const existing = findOpenPr(head, token);
 
+  // Ticket from the branch name (feature/ABC-123-…) becomes a "Refs: ABC-123" line at the end of the description.
+  const ticket = TICKETS.enabled ? extractTicket(head, TICKETS) : null;
+
   return {
     head,
     base,
     token,
+    ticketFooter: ticket ? `${TICKETS.footer}: ${ticket}` : '',
     existing,
     commits,
     commitsText: truncateDiff(formatCommitsForPrompt(commits), MAX_DIFF),
@@ -127,7 +132,7 @@ function openPullRequest({ head, base, title, body, draft, existing, token }) {
  * regenerate, copy, or cancel. The preview goes to stdout; status to stderr.
  */
 export async function runPullRequestMode(input, { interactive = false } = {}) {
-  const { head, base, token, existing, commitsText, diff, breaking } = input;
+  const { head, base, token, existing, commitsText, diff, breaking, ticketFooter } = input;
 
   async function generate(feedback = '') {
     let raw;
@@ -140,7 +145,7 @@ export async function runPullRequestMode(input, { interactive = false } = {}) {
     if (!pr) die('Model returned an unusable pull request. Try again or check COMMITSMITH_MODEL.');
     return {
       title: withBreakingPrefix(pr.title, breaking),
-      body: formatPullRequestBody({ summary: pr.summary, testPlan: pr.testPlan, breaking }),
+      body: formatPullRequestBody({ summary: pr.summary, testPlan: pr.testPlan, breaking, footer: ticketFooter }),
     };
   }
 

@@ -1,9 +1,11 @@
+import { ruleLines } from './rules.mjs';
+
 /** Prompt fragment for a user's "regenerate with an instruction" feedback. */
 function feedbackLines(feedback) {
   return feedback ? ['', `Additional instruction from the user (follow it): ${feedback}`] : [];
 }
 
-export function buildPrompt(diff, feedback = '') {
+export function buildPrompt(diff, feedback = '', rules = null) {
   return [
     'You classify a git diff and produce a commit message. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
     '',
@@ -24,6 +26,7 @@ export function buildPrompt(diff, feedback = '') {
     '- Each entry in "changes" is a short, concrete bullet point (not a restatement of "subject") — e.g. "extracted validation into validateInput()", "added null check for legacy records".',
     '- "changes" entries must be PLAIN descriptions only — never write literal text like "[BREAKING CHANGE: ...]" inside a "changes" string. That annotation is added separately by the caller from "breakingReason"; your job is only to point at the right bullet via "breakingChangeIndex" and explain the reason in "breakingReason".',
     '- Be conservative with "breaking": true — routine refactors, added optional parameters, new files, and internal-only changes are NOT breaking.',
+    ...ruleLines(rules),
     ...feedbackLines(feedback),
     '',
     'Diff:',
@@ -90,6 +93,57 @@ export function buildPullRequestPrompt({ commitsText, diff, feedback = '' }) {
   ].join('\n');
 }
 
+/** Short status update from a person's recent commits (+ uncommitted file names) — used by `--standup`. */
+export function buildStandupPrompt({ commitsText, since, wipFiles = [], branch = '' }) {
+  return [
+    'You write a brief stand-up update for a developer from their git activity. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "done": ["what was accomplished, one short plain-English line each"],',
+    '  "inProgress": ["what looks unfinished or ongoing, one short line each"]',
+    '}',
+    '',
+    'Rules:',
+    '- "done" comes from the commits: merge related commits into one line, describe outcomes (what now works), not file names or commit hashes. At most 6 lines.',
+    '- "inProgress" comes only from the uncommitted files and the branch name; leave it empty when there is nothing uncommitted. At most 3 lines.',
+    '- Do not invent work that the input does not support. No blockers, no praise, no emoji.',
+    '- Output ONLY the JSON object.',
+    '',
+    `Commits since ${since}:`,
+    commitsText || '(none)',
+    '',
+    `Current branch: ${branch || 'unknown'}`,
+    `Uncommitted files: ${wipFiles.length > 0 ? wipFiles.join(', ') : '(none)'}`,
+  ].join('\n');
+}
+
+/** Code review of a diff for real problems (not style) — used by `--review`. */
+export function buildReviewPrompt(diff) {
+  return [
+    'You are a careful senior engineer reviewing a git diff. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "summary": "one or two sentences: what this change does and your overall impression",',
+    '  "findings": [',
+    '    { "severity": "high|medium|low", "file": "path", "line": 0, "title": "short problem statement", "detail": "why it is a problem, concretely", "suggestion": "how to fix it" }',
+    '  ],',
+    '  "missingTests": ["behavior in this diff that has no test coverage"]',
+    '}',
+    '',
+    'Rules:',
+    '- Report real problems supported by the diff: bugs, security issues, data loss, race conditions, unhandled errors, broken edge cases, API misuse, serious performance problems. No style nits, naming opinions or praise.',
+    '- "high" = likely bug, security hole or data loss; "medium" = risky or fragile; "low" = minor but worth fixing.',
+    '- "line" is the line number in the new file when you can tell, otherwise 0.',
+    '- Keep "findings" and "missingTests" empty when there is nothing real to report — do not invent issues.',
+    '- Output ONLY the JSON object.',
+    '',
+    'Diff:',
+    diff,
+  ].join('\n');
+}
+
 /** Focused breaking-change review of a diff (no commit message) — used by `--breaking`. */
 export function buildBreakingPrompt(diff) {
   return [
@@ -124,7 +178,7 @@ export function buildTranslationPrompt(notes, language) {
   ].join('\n');
 }
 
-export function buildGroupingPrompt(fileEntries) {
+export function buildGroupingPrompt(fileEntries, rules = null) {
   const filesBlock = fileEntries
     .map(({ path, diff }) => `### FILE: ${path}\n${diff}`)
     .join('\n\n');
@@ -154,6 +208,7 @@ export function buildGroupingPrompt(fileEntries) {
     '- If a file is unrelated to the others, give it its own group rather than forcing it in.',
     '- Prefer fewer, larger groups over many tiny ones ONLY when the relationship is genuine — do not merge unrelated files just to reduce the count.',
     '- "changes" entries must be PLAIN descriptions only — never write literal text like "[BREAKING CHANGE: ...]" inside a "changes" string. That annotation is added separately by the caller from "breakingReason"; your job is only to point at the right bullet via "breakingChangeIndex" and explain the reason in "breakingReason".',
+    ...ruleLines(rules),
     '- Output ONLY the JSON object.',
     '',
     'Staged files:',

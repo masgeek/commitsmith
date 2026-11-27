@@ -10,7 +10,8 @@ import {
   truncateDiff,
 } from '../git.mjs';
 import { buildPrompt } from '../prompts.mjs';
-import { parseModelJson } from '../parsing.mjs';
+import { parseModelJson, isBreakingMessage } from '../parsing.mjs';
+import { parseCommitHeader, lintCommitMessage } from '../conventional.mjs';
 import { callModel } from '../providers/index.mjs';
 import { ALLOWED_TYPES, BREAKING_GITMOJI } from '../constants.mjs';
 import { releaseNotesFromRef, releaseNotesBranch } from '../cli-args.mjs';
@@ -27,25 +28,23 @@ export const MAX_RANGE_COMMITS = 50;
 export function findCommitIssues(message, parsed) {
   const issues = [];
   const expectedBreaking = parsed.breaking === true;
-  const hasBreakingGitmoji = message.trimStart().startsWith(BREAKING_GITMOJI);
-  const mentionsBreakingChange = /BREAKING CHANGE/i.test(message);
+  // Flagged = 💥 header, `type!:` or a BREAKING CHANGE footer (also anywhere in the text, as before).
+  const flagged = isBreakingMessage(message) || /BREAKING CHANGE/i.test(message);
 
-  if (expectedBreaking && !hasBreakingGitmoji && !mentionsBreakingChange) {
+  if (expectedBreaking && !flagged) {
     issues.push(
       `Model classifies this diff as a BREAKING CHANGE (${parsed.breakingReason || 'no reason given'}), but the commit ` +
-        `message doesn't flag it (no ${BREAKING_GITMOJI} or "BREAKING CHANGE" text).`
+        `message doesn't flag it (no ${BREAKING_GITMOJI}, "!" or "BREAKING CHANGE" text).`
     );
   }
-  if (!expectedBreaking && (hasBreakingGitmoji || mentionsBreakingChange)) {
+  if (!expectedBreaking && flagged) {
     issues.push('The commit message flags a breaking change, but the model does not think this diff is breaking. Double check.');
   }
 
   const expectedType = ALLOWED_TYPES.has(parsed.type) ? parsed.type : null;
-  if (expectedType) {
-    const typeMatch = message.match(/^\S+\s+(\w+)(\([^)]*\))?:/);
-    if (typeMatch && typeMatch[1] !== expectedType) {
-      issues.push(`Model classifies this change as "${expectedType}", but the commit message uses type "${typeMatch[1]}".`);
-    }
+  const header = parseCommitHeader(message.split('\n')[0]);
+  if (expectedType && header && header.type !== expectedType) {
+    issues.push(`Model classifies this change as "${expectedType}", but the commit message uses type "${header.type}".`);
   }
   return issues;
 }
@@ -103,7 +102,7 @@ export function prepareCheckRange() {
 export async function runCheckMode(range = null) {
   if (range) return runRangeCheck(range);
 
-  const { MAX_DIFF } = await loadConfig();
+  const { MAX_DIFF, RULES } = await loadConfig();
   const message = getLastCommitMessage();
   const diff = truncateDiff(getLastCommitDiff(), MAX_DIFF);
 
@@ -112,7 +111,7 @@ export async function runCheckMode(range = null) {
   printMessage(message);
   console.log();
 
-  const issues = findCommitIssues(message, await classify(diff, 'classification for HEAD'));
+  const issues = [...findCommitIssues(message, await classify(diff, 'classification for HEAD')), ...lintCommitMessage(message, RULES)];
   if (issues.length === 0) {
     console.log(chalk.green('✅ No issues found — message looks consistent with the diff.'));
     return;
@@ -122,7 +121,7 @@ export async function runCheckMode(range = null) {
 }
 
 async function runRangeCheck({ baseRef, targetRef, shas }) {
-  const { MAX_DIFF } = await loadConfig();
+  const { MAX_DIFF, RULES } = await loadConfig();
   const selected = shas.slice(-MAX_RANGE_COMMITS); // newest N when the range is huge
   console.log(`Checking ${selected.length} commit(s) in ${baseRef}..${targetRef} against their diffs...`);
   if (selected.length < shas.length) {
@@ -137,7 +136,7 @@ async function runRangeCheck({ baseRef, targetRef, shas }) {
     const message = getCommitMessage(sha);
     const subject = message.split('\n')[0];
     const parsed = await classify(truncateDiff(getCommitDiff(sha), MAX_DIFF), `${sha.slice(0, 7)} ${subject}`.slice(0, 70));
-    const issues = findCommitIssues(message, parsed);
+    const issues = [...findCommitIssues(message, parsed), ...lintCommitMessage(message, RULES)];
     if (issues.length === 0) {
       console.log(chalk.green(`✅ ${sha.slice(0, 7)} ${subject}`));
     } else {

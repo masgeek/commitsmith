@@ -1,0 +1,92 @@
+name: 'commitsmith checks'
+description: 'Pull-request checks with commitsmith: commit-message rules for every commit, and an optional AI breaking-change review.'
+author: 'Sammy Barasa'
+branding:
+  icon: check-circle
+  color: green
+
+# Usage (the checkout needs full history):
+#
+#   - uses: actions/checkout@v4
+#     with: { fetch-depth: 0 }
+#   - uses: masgeek/commitsmith@main
+#
+# Rules come from the repository's .commitsmithrc.json ("commitRules").
+
+inputs:
+  base:
+    description: 'Commit or ref the pull request is compared against. Defaults to the pull request base commit.'
+    required: false
+    default: ''
+  lint-commits:
+    description: 'Check every commit message against the commit rules (offline, no model).'
+    required: false
+    default: 'true'
+  breaking:
+    description: 'AI breaking-change review of the range: off, warn (report only) or fail (fail the job). Needs a provider below.'
+    required: false
+    default: 'off'
+  version:
+    description: 'commitsmith version to run (an npm version or dist-tag).'
+    required: false
+    default: 'latest'
+  node-version:
+    description: 'Node.js version.'
+    required: false
+    default: '22'
+  provider:
+    description: 'Model provider for the breaking-change review: ollama-cloud, openai or anthropic.'
+    required: false
+    default: ''
+  model:
+    description: 'Model name for the breaking-change review (provider default when empty).'
+    required: false
+    default: ''
+  api-key:
+    description: 'API key for the provider — pass it from a repository secret.'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Check commits
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+        INPUT_LINT: ${{ inputs.lint-commits }}
+        INPUT_BREAKING: ${{ inputs.breaking }}
+        INPUT_VERSION: ${{ inputs.version }}
+        COMMITSMITH_PROVIDER: ${{ inputs.provider }}
+        COMMITSMITH_MODEL: ${{ inputs.model }}
+        COMMITSMITH_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -uo pipefail
+        if [ -z "$INPUT_BASE" ]; then
+          echo "::error::No base to compare against. Run on pull_request events, or pass the 'base' input."
+          exit 2
+        fi
+        # Unset provider variables must not shadow the repository's own config.
+        [ -n "$COMMITSMITH_PROVIDER" ] || unset COMMITSMITH_PROVIDER
+        [ -n "$COMMITSMITH_MODEL" ] || unset COMMITSMITH_MODEL
+        [ -n "$COMMITSMITH_API_KEY" ] || unset COMMITSMITH_API_KEY
+
+        cli=(npx --yes "@masgeek/commitsmith@${INPUT_VERSION}")
+        status=0
+
+        if [ "$INPUT_LINT" = "true" ]; then
+          "${cli[@]}" --lint-commits --from "$INPUT_BASE" || status=1
+        fi
+
+        case "$INPUT_BREAKING" in
+          off) ;;
+          warn) "${cli[@]}" --breaking --from "$INPUT_BASE" --no-interactive || echo "::warning::commitsmith found breaking changes (or could not finish the review)." ;;
+          fail) "${cli[@]}" --breaking --from "$INPUT_BASE" --no-interactive || status=1 ;;
+          *) echo "::error::'breaking' must be off, warn or fail."; exit 2 ;;
+        esac
+
+        exit $status

@@ -32,6 +32,11 @@ templates or config-loading machinery in the way.
 - `--check` — re-classifies the last commit's diff and warns if the message
   someone wrote by hand looks inconsistent (wrong type, missed breaking-change
   flag); exits non-zero, so it doubles as a CI/hook gate
+- **Workflow helpers** — `--release` (bump + changelog + tag + push + GitHub Release),
+  `--fixup` (attach staged changes to the commit they belong to), `--reword` (fix bad
+  messages across a branch), `--standup`, a `--lint-commits` CI check with a ready-made
+  GitHub Action, plus repo-style learning, scope inference and size warnings
+  (see [One-command release](#one-command-release---release))
 - `--release-notes` — prints user-facing release-note bullets for the changes
   since the last git tag (or `--from <ref>`), compared against HEAD or a
   specified `--branch <ref>` — for pasting into store listings (Play Store,
@@ -277,7 +282,9 @@ commitsmith --release-notes --store play --lang fr,sw --output notes.md   # 500-
 commitsmith --no-interactive        # never prompt (automatic when piped or CI is set); --interactive forces prompts on a TTY
 
 commitsmith --no-breaking-detection # skip breaking-change classification
-commitsmith --help                  # usage summary
+commitsmith --help                  # short overview: one line per command
+commitsmith help <command>          # full page for one command, e.g. commitsmith help pr
+commitsmith <command> --help        # same: commitsmith init github --help, commitsmith --review --help
 ```
 
 At any confirmation prompt (`[y/N/e]`), answer `e` to open the generated message
@@ -388,6 +395,315 @@ unflagged. It makes one model call per commit and checks at most the newest 50
 ```bash
 commitsmith --check --from 1.0.0   # everything since the 1.0.0 tag
 ```
+
+### Commit rules, gitmoji and ticket links
+
+Project conventions go in your config (`commitRules`, `ticketLinks`, …):
+
+```json
+{
+  "commitRules": {
+    "scopes": ["cli", "api", "docs"],
+    "requireScope": true,
+    "allowedTypes": ["feat", "fix", "docs", "chore"],
+    "maxSubjectLength": 60,
+    "gitmoji": false
+  },
+  "ticketPattern": "PROJ_(\\d+)",
+  "ticketFooter": "Closes"
+}
+```
+
+- **Rules** are told to the model, applied to its answer (a scope or type outside
+  your lists is replaced — scope dropped, type becomes `chore` when allowed), and
+  enforced by `--lint-message` (the commit-msg hook) and `--check`. The hook reads
+  them straight from the config files, so it stays offline and fast. Bad values are
+  ignored with a warning (see `commitsmith doctor`), never an error.
+- **`gitmoji: false`** (or `--no-gitmoji` for one run) produces `type(scope): subject`
+  without the emoji; a breaking change is then `type(scope)!:` plus the
+  `BREAKING CHANGE:` footer. Messages with or without an emoji are understood
+  everywhere (check, bump, changelog, review menu).
+- **Ticket links:** a branch like `feature/ABC-123-login` adds `Refs: ABC-123` to every
+  generated commit message and PR description; `feat/123-login`, `issue-123` and
+  `gh-123` give `Refs: #123`. Uppercase Jira/Linear-style keys only by default, so
+  `feat/login-2` is never mistaken for a ticket. `ticketPattern` (a regex; its first
+  capture group wins) overrides detection, `ticketFooter` changes the word
+  (`Closes`, `Fixes`, …; also `COMMITSMITH_TICKET_FOOTER`), and `ticketLinks: false`
+  turns it off. A ticket the message already mentions isn't added twice.
+
+These keys fall back to your global config when a project `.commitsmithrc.json`
+exists, like the GitHub App settings.
+
+### `commitsmith doctor`
+
+One command that checks the whole setup and prints ✔ / ⚠ / ✖ per item: Node
+version, provider, config file, API key, provider reachability, whether your model
+exists, `gh` login, the GitHub App (verified against GitHub and the repo), secret
+guard mode, commit-rule warnings, the current branch's ticket, installed hooks,
+and whether `commitsmith` is on your `PATH`. Exits `1` if anything is broken.
+
+### `--amend`
+
+`commitsmith --amend` regenerates the message of the last commit from its own diff,
+shows the usual review menu (edit, change type, regenerate, …) and rewrites only the
+message. It refuses when changes are staged (an amend would fold them in). If HEAD is
+already on a remote branch it warns that amending needs a force-push, and with `-y`
+requires `--force` as well. Rules, the breaking-change footer and the ticket footer
+all apply.
+
+### `--review`
+
+`commitsmith --review` asks the model for a code review of your staged (else
+unstaged) changes, or of a range with `--from <ref> [--branch <ref>]`: real problems
+ranked high / medium / low with file, line, why and a suggested fix — not style nits —
+plus behavior that has no test coverage. It is read-only. Exit code is `0` by default;
+`--fail-on high|medium|low` makes it `1` when a finding reaches that level (handy in
+CI); `2` means part of the answer couldn't be parsed. Large diffs are reviewed per
+file (first 30). Likely secrets are redacted before anything is sent.
+
+### Secret guard (`--scan`)
+
+Diffs are sent to a model, so every request is passed through a secret guard
+first (`COMMITSMITH_SECRET_GUARD`, or `secretGuard` in config):
+
+| Mode | Behavior |
+|---|---|
+| `redact` (default) | Likely secrets become `[REDACTED:…]` in what the model sees, and a warning is printed. The secret is **still in your changes** — don't commit it. |
+| `block` | Refuses to send anything that contains a likely secret. |
+| `off` | No filtering (also `--no-secret-guard` for one run). |
+
+It recognizes AWS, GitHub, Slack, Google, OpenAI, Anthropic and Stripe keys, JWTs,
+private-key blocks, `password`/`api_key`/`token = "…"` assignments (placeholders
+like `your_password` are ignored), and sensitive files — `.env*` (not
+`.env.example`), `*.pem`, `*.key`, `*.p12`, SSH keys — whose contents are replaced
+entirely. It is pattern-based, so treat it as a safety net rather than a guarantee.
+
+`commitsmith --scan` runs the same detection offline on your staged (else
+unstaged) changes, prints `file:line  type  sample` (never the full secret) and
+exits `1` if anything is found.
+
+### Version bump (`--bump`) and changelog (`--changelog`)
+
+Both work offline from your git history; neither calls a model.
+
+```bash
+commitsmith --bump                 # current 1.0.4, suggested minor → 1.1.0, and why
+commitsmith --bump --apply         # write the version into package.json (not committed)
+commitsmith --bump --tag           # create a local annotated tag (not pushed)
+commitsmith --bump --tag --push    # create the tag and push it to origin (tag only, never forced)
+commitsmith --bump --tag --push --github   # …and publish the GitHub Release for it (needs gh)
+
+commitsmith --changelog            # create or refresh CHANGELOG.md: unreleased + every tag
+commitsmith --changelog --release-version 1.1.0   # cut a release: [Unreleased] becomes [1.1.0]
+commitsmith --changelog --unreleased              # refresh only the unreleased section
+commitsmith --changelog --stdout                  # print instead of writing a file
+commitsmith --changelog --output docs/HISTORY.md  # write another file
+```
+
+**Bump rules** (commits since the last tag, or `--from <ref>`): a breaking change (💥 header,
+`type!:` or a `BREAKING CHANGE:` footer) means **major**, `feat`/`accessibility`/`removal`
+**minor**, `fix`/`perf`/`security`/`refactor`/`build` (and unrecognized commits) **patch**;
+only docs/test/ci/style/chore commits mean **none**. Tags keep the prefix of the last tag
+(`v` or none).
+
+**The changelog** tracks every semver tag reachable from `HEAD` (`1.2.3` or `v1.2.3`):
+
+```markdown
+# Changelog
+
+## [Unreleased]            ← commits since the newest tag
+## [1.0.4] - 2026-11-26    ← commits between 1.0.3 and 1.0.4, dated by the tag
+## [1.0.3] - 2026-11-26
+## [1.0.0] - 2026-11-26    ← oldest tag: everything up to it
+```
+
+Each section lists breaking changes first (with their footers), then commits by type;
+`ci`/`test`/`style`/`chore` are hidden unless `--all`.
+
+- **It writes `CHANGELOG.md`** in the current directory by default (`--output <file>` picks
+  another file, `--stdout` prints instead). The file is created if it is missing. If it
+  exists it is *merged*, not overwritten: `[Unreleased]` is refreshed, releases that are missing are inserted in version
+  order, and releases already in the file are left exactly as you wrote them. `--rebuild`
+  regenerates the whole file instead.
+- **`--release-version <v>`** labels the unreleased changes as `<v>` with today’s date
+  (replacing `[Unreleased]` in an existing file) — run it when you cut a release, before tagging.
+- **`--from <ref>`** limits the history to what came after that ref; `--branch <ref>` ends it
+  there instead of at `HEAD`.
+- With no version tags at all, the whole history is shown as unreleased.
+
+### One-command release (`--release`)
+
+```bash
+commitsmith --release                        # preview the plan
+commitsmith --release -y --push --github     # cut and publish
+commitsmith --release -y --release-version 2.0.0 --no-changelog
+```
+
+Chains what `--bump` and `--changelog` do: picks the next version from the commits since
+the last tag (or takes `--release-version`), writes it into `package.json`, adds a
+`[<version>]` section to `CHANGELOG.md`, commits `chore(release): <tag>` and creates an
+annotated tag (same prefix style as the last tag). `--push` pushes the branch and the tag
+(never forced); `--github` then creates the GitHub Release with that version's changelog
+section as its body (`--draft` for a draft, `--as-bot` to use your GitHub App; versions
+with a prerelease part are marked as pre-releases). It is a **preview** until you confirm
+in a terminal or pass `-y`, and it refuses to start with uncommitted changes. No model is
+called. If your repository already tags releases in CI on every merge, use `--bump` or
+`--changelog` instead so the two don't collide.
+
+### Releases from tags (`--release-tags`)
+
+```bash
+commitsmith --bump --tag --push      # tag from the commits and push the tag
+commitsmith --release-tags -y        # publish a GitHub Release for the newest tag
+commitsmith --release-tags --all     # preview a backfill: every tag without a release
+```
+
+Publishes GitHub Releases (via `gh`) for tags that have none. Each body is that tag's
+changelog section, breaking changes first — built from git history, no model. By default
+only the newest tag is published, and only if it has no release; `--all` backfills every
+tag without one, oldest first, marking just the newest non-pre-release as "latest". Only
+tags already on `origin` qualify (the release is created with `--verify-tag`); `--draft`
+and `--as-bot` work as for `--release`. A preview until you confirm or pass `-y`.
+
+### `--fixup` and `--reword`
+
+```bash
+git add src/git.mjs
+commitsmith --fixup                 # which earlier commit do these lines belong to?
+commitsmith --fixup --autosquash -y # …and fold it in right away
+
+commitsmith --reword                # preview: regenerate the messages that break your rules
+commitsmith --reword -y             # rewrite them
+```
+
+`--fixup` runs `git blame` on the lines your staged change touches, ranks the commits that
+own them, and records a `fixup!` commit for the one you pick (`-y` takes the top one).
+Only commits that are neither pushed nor tagged are candidates; brand-new files can't be
+attributed. `--autosquash` then folds the fixup in with a non-interactive rebase. No model.
+
+`--reword` regenerates, from each commit's own diff, the messages on this branch
+(`<default branch>..HEAD`, or `--from <ref>`) that fail your commit rules — every commit
+with `--all`. File contents never change: commits are re-created on the same trees with
+the same authors and dates, `Co-authored-by`/`Refs`-style trailers are kept, and the old
+tip is saved as `refs/commitsmith/backup/<branch>-<time>` (the exact undo command is
+printed). It needs a straight line of commits (merge commits stop it), drops commit
+signatures, and refuses commits that are already on a remote unless you pass `--force`.
+
+### Smarter prompts and size warnings
+
+- **Style learning** — the model is shown your last few conventional commit subjects and
+  asked to match their tone and scope naming (`styleExamples`, default 8; `0` or
+  `--no-style` turns it off).
+- **Scope inference** — when every changed file points at the same scope — a workspace
+  package (`pnpm-workspace.yaml` / `package.json` `workspaces`), a folder under `src/`, or a
+  single file's name — that scope is suggested to the model and filled in if it leaves the
+  scope empty. It respects `commitRules.scopes` (`inferScope: false` or `--no-scope-hint` turns it off).
+- **Size warnings** — a single commit of a very large change, one that spans many unrelated
+  areas, includes generated output (`dist/`, `*.min.js`), changes a lockfile without its
+  manifest, or stages binary files prints a heads-up suggesting `--group` or `--split`
+  (`diffWarnings: false` or `--no-warnings` silences it).
+
+### `--standup`
+
+```bash
+commitsmith --standup                              # since the last working day
+commitsmith --standup --since "1 week ago" --all-branches --copy
+commitsmith --standup --author all                 # the whole team
+```
+
+A short **Done / In progress** update in plain language from your commits (Monday looks
+back to Friday) plus the files you have uncommitted. `--since` takes anything git
+understands (`yesterday`, `3 days ago`, `2026-01-15`). The update goes to stdout, the
+header to stderr.
+
+### CI: `--lint-commits` and the GitHub Action
+
+> **Full guide:** [docs/ci.md](docs/ci.md) — every CI command with its exit codes, PR-check
+> and release workflows (tag action, release action, plain commands), and model settings in CI.
+
+`commitsmith --lint-commits [--from <ref>]` checks every non-merge commit message in
+`<ref>..HEAD` (default: default branch..HEAD) against your commit rules — offline, no model —
+and exits `1` on failures. The repository ships a composite action wrapping it:
+
+```yaml
+# .github/workflows/commits.yml
+name: Commits
+on: pull_request
+jobs:
+  commitsmith:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: masgeek/commitsmith@main
+        # optional AI breaking-change review of the whole PR:
+        # with:
+        #   breaking: warn            # off (default) | warn | fail
+        #   provider: anthropic
+        #   api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Rules come from the repository's `.commitsmithrc.json` (`commitRules`). Other inputs:
+`base` (defaults to the pull request's base commit), `lint-commits`, `version`,
+`node-version`, `model`.
+
+#### Release action (`masgeek/commitsmith/release`)
+
+A second, independent action releases any project from its conventional commits — it
+decides the version (`--bump`), writes the notes (`--changelog`), pushes the tag and
+creates the GitHub Release. Offline, no model, no other tag/release actions needed:
+
+```yaml
+# .github/workflows/release.yml
+name: Release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: masgeek/commitsmith/release@main   # pin a tag or SHA in real projects
+```
+
+| Input | Default | |
+|---|---|---|
+| `token` | `github.token` | Pushes the tag and creates the release. Releases made with the default token don't trigger other workflows — pass a GitHub App or PAT token if a publish workflow should start. |
+| `dry-run` | `false` | Work out the version and notes (outputs, job summary) but tag and release nothing. |
+| `draft` | `false` | Create the release as a draft. |
+| `title-prefix` | `Version ` | Release title = prefix + tag. |
+| `version` | `latest` | commitsmith version to run (npm version or dist-tag). |
+| `cli` | — | Run this command instead of the npm package, e.g. `node commitsmith.mjs`. |
+| `setup-node`, `node-version` | `true`, `22` | Install Node first (set `setup-node: false` if the job already did). |
+
+Outputs: `released`, `tag`, `level` (`major`/`minor`/`patch`/`none`), `breaking`, `notes-file`
+— so later steps can react, e.g. `if: steps.release.outputs.released == 'true'`. The action
+fetches full history and tags itself. Nothing is released when only docs, tests, CI,
+style or chore commits landed. Tags keep the prefix of the previous tag (`v` or none).
+(This repository itself releases through the tag action — see [Release process](#release-process).)
+
+### Git hooks
+
+```bash
+commitsmith hook install              # pre-commit + commit-msg
+commitsmith hook install --pre-push   # also gate pushes (calls your model)
+commitsmith hook status
+commitsmith hook uninstall            # removes only hooks commitsmith wrote
+```
+
+- **pre-commit** runs `--scan` (blocks likely secrets), **commit-msg** runs
+  `--lint-message` (`[emoji ]type(scope): subject`, known type, ≤ 72 chars; merge,
+  revert and fixup messages are exempt) — both offline and fast, with no config or
+  keychain lookup.
+- **pre-push** runs `--check --from @{u}`: the push fails if a commit hides an
+  unflagged breaking change.
+- Hooks do nothing if `commitsmith` isn't on your `PATH`. A hook you wrote yourself
+  is never overwritten unless you pass `--force` (it is then backed up as
+  `<hook>.commitsmith-backup` and restored on uninstall). Bypass once with
+  `--no-verify`. They respect `core.hooksPath`.
 
 ### `--pr` (pull requests)
 
@@ -613,7 +929,10 @@ only" or "Your user profile (global)".
     "timeoutMs": 60000,
     "groupMaxDiffPerFile": 1200,
     "fallbackModels": ["qwen2.5-coder:1.5b"],
-    "breakingDetection": true
+    "breakingDetection": true,
+    "styleExamples": 8,
+    "inferScope": true,
+    "diffWarnings": true
   }
 }
 ```
@@ -735,9 +1054,15 @@ Versions are unprefixed (`1.0.0`, not `v1.0.0`) — `tag_prefix: ""` in
 a `node commitsmith.mjs --help` smoke test, `package.json` validation,
 `pnpm audit --production`, and `pnpm pack`.
 
-When CI succeeds on `main`, `.github/workflows/bump-version.yml` creates a
-semver tag and a GitHub Release — but only if `src/` or `package.json` changed
-since the previous tag. When the release is published,
+When CI succeeds on `main`, `.github/workflows/bump-version.yml` tags and releases with
+[`masgeek/github-tag-action`](https://github.com/masgeek/github-tag-action) (`@release`),
+the maintainer's fork of the tag action. It reads the commit messages itself — no AI:
+gitmoji-prefixed conventional commits are understood, a breaking change (💥, `type!:` or a
+`BREAKING CHANGE:` footer) means major, `feat` minor, `fix` and other code changes patch,
+and `default_bump: false` skips the release when only docs/test/ci/style/chore landed. It
+pushes an annotated, unprefixed tag and creates the GitHub Release with the changelog as
+its body. (`commitsmith --bump` and the reusable `release/` action apply the same rules
+locally or in other projects.) When the release is published,
 `.github/workflows/publish-npm.yml` pins `package.json` to that tag in the CI
 checkout (so the committed version doesn't have to match), runs `pnpm test`
 plus the `--help` smoke test, then stages the publish with
@@ -749,6 +1074,8 @@ stage-only Trusted Publisher is deliberate.
 Work on `develop` goes to `main` through `.github/workflows/next-release.yml`:
 after CI succeeds on `develop`, it opens a PR titled `Release: <first line of
 the commit message>` targeting `main`.
+
+The CI commands, exit codes and ready-made workflows are documented in [docs/ci.md](docs/ci.md).
 
 A manual alternative is `pnpm version patch` (or `minor`/`major`) followed by
 `git push --follow-tags`, but the automated path above is the normal one.

@@ -1,13 +1,17 @@
+
 {
   "name": "@masgeek/commitsmith",
-  "version": "1.0.0",
-  "description": "Minimal AI-powered git commit message generator backed by local Ollama models or cloud providers (Ollama Cloud, OpenAI, Anthropic). Supports single-line, per-file, per-hunk, and grouped-by-related-change commits, with breaking-change detection.",
-  "author": "Sammy Barasa (Munywele Sammy Barasa) <https://munywele.co.ke>",
+  "version": "1.0.0-alpha.1",
+  "description": "AI-powered Git workflow assistant for generating, splitting, reviewing, and managing commits and releases using local or cloud LLMs.",
+  "author": {
+    "name": "Sammy Barasa (Munywele Sammy Barasa)",
+    "url": "https://munywele.co.ke"
+  },
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@12.23.0",
   "engines": {
-    "node": ">=18"
+    "node": "^22.18.0 || >=24.0.0"
   },
   "bin": {
     "commitsmith": "commitsmith.mjs",
@@ -28,12 +32,24 @@
     "commit:hunks": "node commitsmith.mjs --split-hunks --commit",
     "commit:group": "node commitsmith.mjs --group --commit",
     "commit:check": "node commitsmith.mjs --check",
-    "breaking": "node commitsmith.mjs --breaking",
+    "commit:breaking": "node commitsmith.mjs --breaking",
     "pr": "node commitsmith.mjs --pr",
+    "scan": "node commitsmith.mjs --scan",
+    "review": "node commitsmith.mjs --review",
+    "doctor": "node commitsmith.mjs doctor",
+    "amend": "node commitsmith.mjs --amend",
+    "bump": "node commitsmith.mjs --bump",
+    "changelog": "node commitsmith.mjs --changelog",
+    "release": "node commitsmith.mjs --release",
+    "fixup": "node commitsmith.mjs --fixup",
+    "reword": "node commitsmith.mjs --reword",
+    "standup": "node commitsmith.mjs --standup",
+    "lint-commits": "node commitsmith.mjs --lint-commits",
     "release-notes": "node commitsmith.mjs --release-notes",
     "test:syntax": "node scripts/check-syntax.mjs",
     "test:unit": "node --test \"test/**/*.test.mjs\"",
-    "test": "node scripts/check-syntax.mjs && node --test \"test/**/*.test.mjs\""
+    "test": "node scripts/check-syntax.mjs && node --test \"test/**/*.test.mjs\"",
+    "prepublishOnly": "pnpm test"
   },
   "dependencies": {
     "@clack/prompts": "^1.9.0",
@@ -41,13 +57,19 @@
     "chalk": "^6.0.1",
     "cosmiconfig": "^10.0.1",
     "env-paths": "^4.0.0",
-    "ora": "^10.0.0"
+    "ora": "^10.0.0",
+    "semver": "^7.8.6"
   },
   "keywords": [
     "git",
+    "git-cli",
+    "git-automation",
     "commit",
     "commit-message",
+    "commit-generator",
     "conventional-commits",
+    "code-review",
+    "release-management",
     "ai",
     "cli",
     "ollama",

@@ -1,0 +1,176 @@
+name: 'commitsmith release'
+description: 'Release from conventional commits: decide the next version, tag it and publish a GitHub Release with generated notes. Offline, no model.'
+author: 'Sammy Barasa'
+branding:
+  icon: tag
+  color: blue
+
+# Usage:
+#
+#   permissions:
+#     contents: write
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: masgeek/commitsmith/release@main     # pin a tag or SHA in real projects
+#
+# The version comes from the commits since the last tag: a breaking change
+# (💥, `type!:` or a `BREAKING CHANGE:` footer) → major, feat → minor, fix and
+# other code changes → patch; docs/test/ci/style/chore alone → no release.
+# Releases created with the default GITHUB_TOKEN do not trigger other
+# workflows; pass a GitHub App or PAT token to start e.g. a publish workflow.
+
+inputs:
+  token:
+    description: 'Token that pushes the tag and creates the release.'
+    required: false
+    default: ${{ github.token }}
+  dry-run:
+    description: 'Only work out the version and notes (see the outputs); tag and release nothing.'
+    required: false
+    default: 'false'
+  draft:
+    description: 'Create the release as a draft.'
+    required: false
+    default: 'false'
+  title-prefix:
+    description: 'Release title is this prefix plus the tag.'
+    required: false
+    default: 'Version '
+  version:
+    description: 'commitsmith version to run (an npm version or dist-tag).'
+    required: false
+    default: 'latest'
+  cli:
+    description: 'Run this command instead of the published package, e.g. "node commitsmith.mjs" to release a checkout of commitsmith itself.'
+    required: false
+    default: ''
+  setup-node:
+    description: 'Install Node.js first. Set to false if the job already did.'
+    required: false
+    default: 'true'
+  node-version:
+    description: 'Node.js version when setup-node is true.'
+    required: false
+    default: '22'
+
+outputs:
+  released:
+    description: 'true when a tag and release were created.'
+    value: ${{ steps.publish.outputs.released || 'false' }}
+  tag:
+    description: 'The new tag (empty when nothing is releasable).'
+    value: ${{ steps.decide.outputs.tag }}
+  level:
+    description: 'major, minor, patch or none.'
+    value: ${{ steps.decide.outputs.level }}
+  breaking:
+    description: 'true when the release contains breaking changes.'
+    value: ${{ steps.decide.outputs.breaking }}
+  notes-file:
+    description: 'Path of the generated release notes (markdown).'
+    value: ${{ steps.notes.outputs.file }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      if: inputs.setup-node == 'true'
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Decide the version
+      id: decide
+      shell: bash
+      env:
+        INPUT_CLI: ${{ inputs.cli }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # Tags and full history are needed to find the last release.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --quiet --unshallow --tags
+        else
+          git fetch --quiet --tags
+        fi
+        if [ -n "$INPUT_CLI" ]; then
+          read -r -a cli <<< "$INPUT_CLI"
+        else
+          cli=(npx --yes "@masgeek/commitsmith@${INPUT_VERSION}")
+        fi
+        # Remember how to call it for the next steps.
+        printf '%s\n' "${cli[*]}" > "$RUNNER_TEMP/commitsmith-cli"
+        "${cli[@]}" --bump --json > "$RUNNER_TEMP/commitsmith-bump.json"
+        cat "$RUNNER_TEMP/commitsmith-bump.json"
+        field() { node -p "const v = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))[process.argv[2]]; v ?? ''" "$RUNNER_TEMP/commitsmith-bump.json" "$1"; }
+        {
+          echo "tag=$(field tag)"
+          echo "level=$(field level)"
+          echo "breaking=$(field breaking)"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Write the release notes
+      id: notes
+      if: steps.decide.outputs.tag != ''
+      shell: bash
+      env:
+        TAG: ${{ steps.decide.outputs.tag }}
+      run: |
+        set -euo pipefail
+        read -r -a cli < "$RUNNER_TEMP/commitsmith-cli"
+        file="$RUNNER_TEMP/commitsmith-release-notes.md"
+        # This version's changelog section, without its heading line.
+        "${cli[@]}" --changelog --unreleased --stdout --release-version "$TAG" | sed '1{/^## /d}' > "$file"
+        echo "file=$file" >> "$GITHUB_OUTPUT"
+
+    - name: Tag and publish the release
+      id: publish
+      if: steps.decide.outputs.tag != '' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        TAG: ${{ steps.decide.outputs.tag }}
+        NOTES: ${{ steps.notes.outputs.file }}
+        GH_TOKEN: ${{ inputs.token }}
+        DRAFT: ${{ inputs.draft }}
+        TITLE_PREFIX: ${{ inputs.title-prefix }}
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        # actions/checkout stores its own credential header; replace it with this token for the push.
+        git config --local --unset-all http.https://github.com/.extraheader || true
+        auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+        echo "::add-mask::$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+
+        git tag -a "$TAG" -m "$TAG"
+        git -c "http.https://github.com/.extraheader=$auth" push origin "refs/tags/$TAG"
+
+        args=(--verify-tag --latest --title "${TITLE_PREFIX}${TAG}" --notes-file "$NOTES")
+        [ "$DRAFT" = "true" ] && args+=(--draft)
+        # The tag is on the remote first (immutable releases need that); on failure take it back off.
+        if ! gh release create "$TAG" "${args[@]}"; then
+          git -c "http.https://github.com/.extraheader=$auth" push --delete origin "refs/tags/$TAG" || true
+          exit 1
+        fi
+        echo "released=true" >> "$GITHUB_OUTPUT"
+
+    - name: Summary
+      shell: bash
+      env:
+        TAG: ${{ steps.decide.outputs.tag }}
+        LEVEL: ${{ steps.decide.outputs.level }}
+        BREAKING: ${{ steps.decide.outputs.breaking }}
+        RELEASED: ${{ steps.publish.outputs.released }}
+        DRY: ${{ inputs.dry-run }}
+        NOTES: ${{ steps.notes.outputs.file }}
+      run: |
+        {
+          if [ -z "$TAG" ]; then
+            echo "## No release"
+            echo "No releasable commits since the last tag (docs, tests, CI, style or chore only)."
+          else
+            echo "## $([ "$DRY" = "true" ] && echo "Would release" || echo "Released") $TAG"
+            echo "Bump: **$LEVEL**$([ "$BREAKING" = "true" ] && echo ' — contains breaking changes')"
+            echo
+            cat "$NOTES"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
