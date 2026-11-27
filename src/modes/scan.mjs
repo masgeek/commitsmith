@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import chalk from 'chalk';
-import { getWorkingDiffPreferStaged } from '../git.mjs';
+import { getWorkingDiffPreferStaged, getCommitsDetailed, getDefaultBranch, resolveCommit } from '../git.mjs';
+import { releaseNotesFromRef, releaseNotesBranch } from '../cli-args.mjs';
 import { scanDiff } from '../secret-guard.mjs';
 import { lintCommitMessage } from '../conventional.mjs';
 import { loadRulesFromFiles } from '../rules.mjs';
@@ -30,6 +31,40 @@ export function runScanMode() {
     console.error(`  ${where}  ${f.type}${f.sample ? `  ${f.sample}` : ''}`);
   }
   console.error('\nRemove them (and rotate any real credential) before committing. Bypass once with `git commit --no-verify`.');
+  process.exitCode = 1;
+}
+
+/**
+ * `--lint-commits [--from <ref>] [--branch <ref>]`: offline check of every
+ * non-merge commit message in <ref>..<branch> against the commit rules — the
+ * CI counterpart of the commit-msg hook. The range defaults to the default
+ * branch..HEAD. No model, no network. Exit 1 when any message fails.
+ */
+export async function runLintCommitsMode() {
+  const target = releaseNotesBranch || 'HEAD';
+  if (!resolveCommit(target)) die(`--branch: "${target}" is not a valid ref in this repo.`);
+
+  let base = releaseNotesFromRef;
+  if (base) {
+    if (!resolveCommit(base)) die(`--from: "${base}" is not a valid ref in this repo.`);
+  } else {
+    const def = getDefaultBranch();
+    if (!def) die('Could not determine the default branch. Pass --from <ref>.');
+    base = resolveCommit(`origin/${def}`) ? `origin/${def}` : def;
+  }
+
+  const commits = getCommitsDetailed(base, target);
+  const rules = await loadRulesFromFiles();
+  let failed = 0;
+  for (const c of commits) {
+    const issues = lintCommitMessage(`${c.subject}\n\n${c.body}`, rules);
+    if (issues.length === 0) continue;
+    failed++;
+    console.error(chalk.yellow(`✖ ${c.sha.slice(0, 7)}  ${c.subject}`));
+    issues.forEach((i) => console.error(`    - ${i}`));
+  }
+  if (failed === 0) return console.log(chalk.green(`✅ ${commits.length} commit message(s) in ${base}..${target} follow the rules.`));
+  console.error(`\n${failed} of ${commits.length} commit message(s) break the rules. Fix them with \`commitsmith --reword\`.`);
   process.exitCode = 1;
 }
 

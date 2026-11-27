@@ -14,7 +14,11 @@ import {
   changelogAll,
   changelogUnreleasedOnly,
   changelogRebuild,
+  changelogStdout,
 } from '../cli-args.mjs';
+
+/** Where the changelog is written when --output isn't given. */
+export const DEFAULT_CHANGELOG_FILE = 'CHANGELOG.md';
 import { die } from '../die.mjs';
 
 /**
@@ -48,16 +52,18 @@ export function buildChangelogSections({ tags, from = null, commitsFor, all = fa
 
 /**
  * `--changelog [--from <ref>] [--branch <ref>] [--release-version <v>] [--all]
- *  [--unreleased] [--rebuild] [--output <file>]`
+ *  [--unreleased] [--rebuild] [--output <file>] [--stdout]`
  *
- * A full changelog from git history: the unreleased changes first, then every
+ * Writes CHANGELOG.md (or --output <file>); --stdout prints instead. A full
+ * changelog from git history: the unreleased changes first, then every
  * semver tag newest to oldest with its date and the commits since the previous
  * tag — breaking changes (with their footers) first, then commits by type;
  * ci/test/style/chore are hidden unless --all. Offline, no model.
  *  --release-version v   label the unreleased changes as v (today's date) instead of [Unreleased]
  *  --unreleased          only the unreleased section
  *  --from <ref>          only history after that ref
- *  --output <file>       write the file: created if missing; otherwise [Unreleased] is refreshed
+ *  --stdout              print instead of writing a file
+ *  --output <file>       write this file instead of CHANGELOG.md: created if missing; otherwise [Unreleased] is refreshed
  *                        and missing releases are inserted, while releases already in the file
  *                        are left as written (--rebuild regenerates the whole file)
  */
@@ -82,27 +88,28 @@ export function runChangelogMode() {
 
   const wanted = changelogUnreleasedOnly ? sections.slice(0, 1) : sections;
 
-  if (!releaseNotesOutput) {
+  if (changelogStdout) {
     console.log(changelogUnreleasedOnly ? wanted[0].markdown : renderChangelog(wanted).trimEnd());
     return;
   }
 
+  const file = releaseNotesOutput || DEFAULT_CHANGELOG_FILE;
   let existing = '';
   try {
-    existing = fs.readFileSync(releaseNotesOutput, 'utf8');
+    existing = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    if (err.code !== 'ENOENT') die(`Could not read ${releaseNotesOutput}: ${err.code || err.message}`);
+    if (err.code !== 'ENOENT') die(`Could not read ${file}: ${err.code || err.message}`);
   }
 
   const content = changelogRebuild || !existing.trim() ? renderChangelog(wanted) : mergeChangelogSections(existing, wanted);
   try {
-    fs.writeFileSync(releaseNotesOutput, content, 'utf8');
+    fs.writeFileSync(file, content, 'utf8');
   } catch (err) {
-    die(`Could not write ${releaseNotesOutput}: ${err.code || err.message}`);
+    die(`Could not write ${file}: ${err.code || err.message}`);
   }
   const releases = wanted.filter((s) => !s.unreleased).length;
   console.error(
-    `${existing.trim() ? (changelogRebuild ? 'Rebuilt' : 'Updated') : 'Created'} ${releaseNotesOutput}: ` +
+    `${existing.trim() ? (changelogRebuild ? 'Rebuilt' : 'Updated') : 'Created'} ${file}: ` +
       `${releaseVersion ? `[${releaseVersion}]` : '[Unreleased]'} plus ${releases} release${releases === 1 ? '' : 's'}.`
   );
 }

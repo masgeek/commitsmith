@@ -77,6 +77,25 @@ export function createPullRequest({ base, head, title, body, draft = false, toke
   }
 }
 
+/** Arguments for `gh release create`; notes come on stdin, and --verify-tag refuses to invent a tag that isn't on the remote. */
+export function buildReleaseCreateArgs({ tag, title = tag, prerelease = false, draft = false }) {
+  return ['release', 'create', tag, '--title', title, '--notes-file', '-', '--verify-tag', ...(prerelease ? ['--prerelease'] : []), ...(draft ? ['--draft'] : [])];
+}
+
+/** Creates a GitHub Release for an already-pushed tag and returns its URL. Throws with gh's message on failure. */
+export function createGithubRelease({ tag, title, notes, prerelease = false, draft = false, token = null }) {
+  try {
+    return execFileSync('gh', buildReleaseCreateArgs({ tag, title, prerelease, draft }), {
+      input: notes,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: ghEnv(token),
+    }).trim();
+  } catch (err) {
+    throw new Error((err.stderr ? err.stderr.toString().trim() : '') || err.message);
+  }
+}
+
 /** Replaces an existing PR's title and description. Throws with gh's message on failure. */
 export function updatePullRequest({ number, title, body, token = null }) {
   try {

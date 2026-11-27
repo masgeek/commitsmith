@@ -27,6 +27,7 @@ export const changelogMode = args.includes('--changelog');
 export const changelogAll = args.includes('--all');
 export const changelogUnreleasedOnly = args.includes('--unreleased');
 export const changelogRebuild = args.includes('--rebuild');
+export const changelogStdout = args.includes('--stdout');
 export const hookMode = args[0] === 'hook';
 export const hookAction = hookMode ? (args[1] ?? 'status') : null;
 export const hookPrePush = args.includes('--pre-push');
@@ -36,6 +37,20 @@ export const prDraft = args.includes('--draft');
 export const prCreate = args.includes('--create');
 export const prAsBot = args.includes('--as-bot');
 export const releaseNotesMode = args.includes('--release-notes');
+export const noStyleHint = args.includes('--no-style');
+export const noScopeHint = args.includes('--no-scope-hint');
+export const noWarnings = args.includes('--no-warnings');
+export const releaseMode = args.includes('--release');
+export const releasePush = args.includes('--push');
+export const releaseGithub = args.includes('--github');
+export const noChangelog = args.includes('--no-changelog');
+export const fixupMode = args.includes('--fixup');
+export const autosquash = args.includes('--autosquash');
+export const rewordMode = args.includes('--reword');
+export const rewordAll = args.includes('--all');
+export const standupMode = args.includes('--standup');
+export const standupAllBranches = args.includes('--all-branches');
+export const lintCommitsMode = args.includes('--lint-commits');
 
 /** Reads `--name value` or `--name=value` from argv. Null when absent; throws when the value is missing. */
 export function flagValue(argv, name) {
@@ -86,6 +101,8 @@ export const releaseNotesLangs = langRaw
   : [];
 export const prBase = readFlag('--base');
 export const lintMessageFile = readFlag('--lint-message');
+export const standupSince = readFlag('--since');
+export const standupAuthor = readFlag('--author');
 export const releaseVersion = readFlag('--release-version');
 const failOnRaw = readFlag('--fail-on');
 if (failOnRaw !== null && !['high', 'medium', 'low'].includes(failOnRaw)) {
@@ -96,9 +113,14 @@ export const failOn = ['high', 'medium', 'low'].includes(failOnRaw) ? failOnRaw 
 /** Flags that only make sense with one mode, as [mode flag, [its flags]] — cli.mjs warns when they appear alone. */
 export const scopedFlagGroups = [
   ['--bump', ['--apply', '--tag'], bumpMode],
-  ['--changelog', ['--all', '--release-version', '--unreleased', '--rebuild'], changelogMode],
+  ['--changelog', ['--unreleased', '--rebuild', '--stdout'], changelogMode],
+  ['--changelog or --reword', ['--all'], changelogMode || rewordMode],
+  ['--changelog or --release', ['--release-version'], changelogMode || releaseMode],
+  ['--release', ['--push', '--github', '--no-changelog'], releaseMode],
+  ['--fixup', ['--autosquash'], fixupMode],
+  ['--standup', ['--since', '--author', '--all-branches'], standupMode],
   ['hook', ['--pre-push'], hookMode],
-  ['hook or --amend', ['--force'], hookMode || amendMode],
+  ['hook, --amend or --reword', ['--force'], hookMode || amendMode || rewordMode],
   ['--review', ['--fail-on'], reviewMode],
 ].map(([mode, flags, active]) => ({ mode, active, used: flags.filter((f) => args.some((a) => a === f || a.startsWith(`${f}=`))) }));
 /** Pull-request-only flags on the command line (to warn when used without --pr). */
@@ -118,7 +140,7 @@ export const versionRequested = args.includes('--version') || args.includes('-v'
 // interactive staging prompt (see modes/interactive-stage.mjs), we also ask
 // the user which mode/commit behavior to run, instead of silently defaulting.
 export const bareInvocation =
-  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode && !scanMode && !bumpMode && !changelogMode && !lintMessageFile && !hookMode && !amendMode && !reviewMode && !doctorMode;
+  !shouldCommit && !splitMode && !splitHunksMode && !groupMode && !dryRun && !checkMode && !breakingMode && !prMode && !releaseNotesMode && !scanMode && !bumpMode && !changelogMode && !lintMessageFile && !hookMode && !amendMode && !reviewMode && !doctorMode && !releaseMode && !fixupMode && !rewordMode && !standupMode && !lintCommitsMode;
 
 /** Applies the config file's `breakingDetection: false`, once config.mjs's loadConfig() has resolved it. */
 export function applyFileConfigToArgs(fileConfig) {

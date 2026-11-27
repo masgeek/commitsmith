@@ -32,6 +32,11 @@ templates or config-loading machinery in the way.
 - `--check` — re-classifies the last commit's diff and warns if the message
   someone wrote by hand looks inconsistent (wrong type, missed breaking-change
   flag); exits non-zero, so it doubles as a CI/hook gate
+- **Workflow helpers** — `--release` (bump + changelog + tag + push + GitHub Release),
+  `--fixup` (attach staged changes to the commit they belong to), `--reword` (fix bad
+  messages across a branch), `--standup`, a `--lint-commits` CI check with a ready-made
+  GitHub Action, plus repo-style learning, scope inference and size warnings
+  (see [One-command release](#one-command-release---release))
 - `--release-notes` — prints user-facing release-note bullets for the changes
   since the last git tag (or `--from <ref>`), compared against HEAD or a
   specified `--branch <ref>` — for pasting into store listings (Play Store,
@@ -486,10 +491,11 @@ commitsmith --bump                 # current 1.0.4, suggested minor → 1.1.0, a
 commitsmith --bump --apply         # write the version into package.json (not committed)
 commitsmith --bump --tag           # create a local annotated tag (not pushed)
 
-commitsmith --changelog            # print the whole changelog: unreleased + every tag
-commitsmith --changelog --output CHANGELOG.md             # create or refresh the file
-commitsmith --changelog --release-version 1.1.0 --output CHANGELOG.md   # cut a release
-commitsmith --changelog --unreleased                      # just the unreleased section
+commitsmith --changelog            # create or refresh CHANGELOG.md: unreleased + every tag
+commitsmith --changelog --release-version 1.1.0   # cut a release: [Unreleased] becomes [1.1.0]
+commitsmith --changelog --unreleased              # refresh only the unreleased section
+commitsmith --changelog --stdout                  # print instead of writing a file
+commitsmith --changelog --output docs/HISTORY.md  # write another file
 ```
 
 **Bump rules** (commits since the last tag, or `--from <ref>`): a breaking change (💥 header,
@@ -512,8 +518,9 @@ only docs/test/ci/style/chore commits mean **none**. Tags keep the prefix of the
 Each section lists breaking changes first (with their footers), then commits by type;
 `ci`/`test`/`style`/`chore` are hidden unless `--all`.
 
-- **`--output <file>`** creates the file if it is missing. If it exists it is *merged*, not
-  overwritten: `[Unreleased]` is refreshed, releases that are missing are inserted in version
+- **It writes `CHANGELOG.md`** in the current directory by default (`--output <file>` picks
+  another file, `--stdout` prints instead). The file is created if it is missing. If it
+  exists it is *merged*, not overwritten: `[Unreleased]` is refreshed, releases that are missing are inserted in version
   order, and releases already in the file are left exactly as you wrote them. `--rebuild`
   regenerates the whole file instead.
 - **`--release-version <v>`** labels the unreleased changes as `<v>` with today’s date
@@ -521,6 +528,104 @@ Each section lists breaking changes first (with their footers), then commits by 
 - **`--from <ref>`** limits the history to what came after that ref; `--branch <ref>` ends it
   there instead of at `HEAD`.
 - With no version tags at all, the whole history is shown as unreleased.
+
+### One-command release (`--release`)
+
+```bash
+commitsmith --release                        # preview the plan
+commitsmith --release -y --push --github     # cut and publish
+commitsmith --release -y --release-version 2.0.0 --no-changelog
+```
+
+Chains what `--bump` and `--changelog` do: picks the next version from the commits since
+the last tag (or takes `--release-version`), writes it into `package.json`, adds a
+`[<version>]` section to `CHANGELOG.md`, commits `chore(release): <tag>` and creates an
+annotated tag (same prefix style as the last tag). `--push` pushes the branch and the tag
+(never forced); `--github` then creates the GitHub Release with that version's changelog
+section as its body (`--draft` for a draft, `--as-bot` to use your GitHub App; versions
+with a prerelease part are marked as pre-releases). It is a **preview** until you confirm
+in a terminal or pass `-y`, and it refuses to start with uncommitted changes. No model is
+called. If your repository already tags releases in CI on every merge, use `--bump` or
+`--changelog` instead so the two don't collide.
+
+### `--fixup` and `--reword`
+
+```bash
+git add src/git.mjs
+commitsmith --fixup                 # which earlier commit do these lines belong to?
+commitsmith --fixup --autosquash -y # …and fold it in right away
+
+commitsmith --reword                # preview: regenerate the messages that break your rules
+commitsmith --reword -y             # rewrite them
+```
+
+`--fixup` runs `git blame` on the lines your staged change touches, ranks the commits that
+own them, and records a `fixup!` commit for the one you pick (`-y` takes the top one).
+Only commits that are neither pushed nor tagged are candidates; brand-new files can't be
+attributed. `--autosquash` then folds the fixup in with a non-interactive rebase. No model.
+
+`--reword` regenerates, from each commit's own diff, the messages on this branch
+(`<default branch>..HEAD`, or `--from <ref>`) that fail your commit rules — every commit
+with `--all`. File contents never change: commits are re-created on the same trees with
+the same authors and dates, `Co-authored-by`/`Refs`-style trailers are kept, and the old
+tip is saved as `refs/commitsmith/backup/<branch>-<time>` (the exact undo command is
+printed). It needs a straight line of commits (merge commits stop it), drops commit
+signatures, and refuses commits that are already on a remote unless you pass `--force`.
+
+### Smarter prompts and size warnings
+
+- **Style learning** — the model is shown your last few conventional commit subjects and
+  asked to match their tone and scope naming (`styleExamples`, default 8; `0` or
+  `--no-style` turns it off).
+- **Scope inference** — when every changed file points at the same scope — a workspace
+  package (`pnpm-workspace.yaml` / `package.json` `workspaces`), a folder under `src/`, or a
+  single file's name — that scope is suggested to the model and filled in if it leaves the
+  scope empty. It respects `commitRules.scopes` (`inferScope: false` or `--no-scope-hint` turns it off).
+- **Size warnings** — a single commit of a very large change, one that spans many unrelated
+  areas, includes generated output (`dist/`, `*.min.js`), changes a lockfile without its
+  manifest, or stages binary files prints a heads-up suggesting `--group` or `--split`
+  (`diffWarnings: false` or `--no-warnings` silences it).
+
+### `--standup`
+
+```bash
+commitsmith --standup                              # since the last working day
+commitsmith --standup --since "1 week ago" --all-branches --copy
+commitsmith --standup --author all                 # the whole team
+```
+
+A short **Done / In progress** update in plain language from your commits (Monday looks
+back to Friday) plus the files you have uncommitted. `--since` takes anything git
+understands (`yesterday`, `3 days ago`, `2026-01-15`). The update goes to stdout, the
+header to stderr.
+
+### CI: `--lint-commits` and the GitHub Action
+
+`commitsmith --lint-commits [--from <ref>]` checks every non-merge commit message in
+`<ref>..HEAD` (default: default branch..HEAD) against your commit rules — offline, no model —
+and exits `1` on failures. The repository ships a composite action wrapping it:
+
+```yaml
+# .github/workflows/commits.yml
+name: Commits
+on: pull_request
+jobs:
+  commitsmith:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: masgeek/commitsmith@main
+        # optional AI breaking-change review of the whole PR:
+        # with:
+        #   breaking: warn            # off (default) | warn | fail
+        #   provider: anthropic
+        #   api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Rules come from the repository's `.commitsmithrc.json` (`commitRules`). Other inputs:
+`base` (defaults to the pull request's base commit), `lint-commits`, `version`,
+`node-version`, `model`.
 
 ### Git hooks
 
@@ -766,7 +871,10 @@ only" or "Your user profile (global)".
     "timeoutMs": 60000,
     "groupMaxDiffPerFile": 1200,
     "fallbackModels": ["qwen2.5-coder:1.5b"],
-    "breakingDetection": true
+    "breakingDetection": true,
+    "styleExamples": 8,
+    "inferScope": true,
+    "diffWarnings": true
   }
 }
 ```

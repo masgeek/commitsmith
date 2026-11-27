@@ -317,6 +317,21 @@ export function parseReleaseNotes(raw) {
   return lines.length > 0 ? lines.slice(0, MAX_RELEASE_NOTES) : null;
 }
 
+/** Parses the `--standup` response into { done[], inProgress[] }; null when both are empty or there is no JSON. */
+export function parseStandup(raw) {
+  const parsed = parseModelJson(raw);
+  if (!parsed) return null;
+  const done = cleanList(parsed.done, 6);
+  const inProgress = cleanList(parsed.inProgress, 3);
+  return done.length === 0 && inProgress.length === 0 ? null : { done, inProgress };
+}
+
+/** Plain-text stand-up: "Done:" and "In progress:" bullet blocks (empty blocks omitted). */
+export function formatStandup({ done, inProgress }) {
+  const block = (title, items) => (items.length > 0 ? `${title}\n${items.map((i) => `- ${i}`).join('\n')}` : '');
+  return [block('Done:', done), block('In progress:', inProgress)].filter(Boolean).join('\n\n');
+}
+
 /** Renders notes as the "- bullet" block that --release-notes prints. */
 export function formatReleaseNotes(notes) {
   return notes.map((n) => `- ${n}`).join('\n');

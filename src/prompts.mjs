@@ -93,6 +93,31 @@ export function buildPullRequestPrompt({ commitsText, diff, feedback = '' }) {
   ].join('\n');
 }
 
+/** Short status update from a person's recent commits (+ uncommitted file names) — used by `--standup`. */
+export function buildStandupPrompt({ commitsText, since, wipFiles = [], branch = '' }) {
+  return [
+    'You write a brief stand-up update for a developer from their git activity. Respond with ONLY a JSON object, nothing else — no markdown fences, no commentary.',
+    '',
+    'JSON shape:',
+    '{',
+    '  "done": ["what was accomplished, one short plain-English line each"],',
+    '  "inProgress": ["what looks unfinished or ongoing, one short line each"]',
+    '}',
+    '',
+    'Rules:',
+    '- "done" comes from the commits: merge related commits into one line, describe outcomes (what now works), not file names or commit hashes. At most 6 lines.',
+    '- "inProgress" comes only from the uncommitted files and the branch name; leave it empty when there is nothing uncommitted. At most 3 lines.',
+    '- Do not invent work that the input does not support. No blockers, no praise, no emoji.',
+    '- Output ONLY the JSON object.',
+    '',
+    `Commits since ${since}:`,
+    commitsText || '(none)',
+    '',
+    `Current branch: ${branch || 'unknown'}`,
+    `Uncommitted files: ${wipFiles.length > 0 ? wipFiles.join(', ') : '(none)'}`,
+  ].join('\n');
+}
+
 /** Code review of a diff for real problems (not style) — used by `--review`. */
 export function buildReviewPrompt(diff) {
   return [

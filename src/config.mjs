@@ -110,6 +110,13 @@ export async function loadConfig() {
   // `init github` keeps in the global config. Fall back to the global file for
   // these keys: env var > the found config file > the global config file.
   const pick = (key) => fileConfig[key] ?? globalFile[key];
+  // Prompt/UX niceties. styleExamples = how many recent commit subjects to show the model (0 = off).
+  const styleRaw = process.env.COMMITSMITH_STYLE_EXAMPLES ?? pick('styleExamples');
+  const styleNum = styleRaw === undefined || styleRaw === '' || styleRaw === null ? NaN : Number(styleRaw);
+  const STYLE_EXAMPLES = Number.isInteger(styleNum) && styleNum >= 0 && styleNum <= 30 ? styleNum : 8;
+  const INFER_SCOPE = pick('inferScope') !== false;
+  const DIFF_WARNINGS = pick('diffWarnings') !== false;
+
   const GITHUB_BOT = {
     asDefault: /^(1|true|yes)$/i.test(String(process.env.COMMITSMITH_PR_AS_BOT ?? pick('prAsBot') ?? '')),
     token: process.env.COMMITSMITH_GH_TOKEN || '',
@@ -135,6 +142,9 @@ export async function loadConfig() {
     RULES,
     RULE_WARNINGS,
     TICKETS,
+    STYLE_EXAMPLES,
+    INFER_SCOPE,
+    DIFF_WARNINGS,
   };
   return cached;
 }

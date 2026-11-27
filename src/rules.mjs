@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { cosmiconfig } from 'cosmiconfig';
 import { ALLOWED_TYPES } from './constants.mjs';
 import { GLOBAL_CONFIG_PATH } from './global-config.mjs';
+import { scopeLines, styleLines } from './hints.mjs';
 
 // (config.mjs imports this module, so the tiny JSON reader lives here rather than being imported back.)
 function readGlobalConfig() {
@@ -102,5 +103,7 @@ export function ruleLines(rules) {
   if (rules.maxSubjectLength !== DEFAULT_RULES.maxSubjectLength) {
     lines.push(`- "subject" must be at most ${rules.maxSubjectLength} characters.`);
   }
+  // Optional hints added by generate.mjs: this repo's recent commit style and the scope the changed paths point at.
+  lines.push(...scopeLines(rules.scopeHint), ...styleLines(rules.styleExamples));
   return lines;
 }

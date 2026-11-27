@@ -1,3 +1,4 @@
+import semver from 'semver';
 import { ALLOWED_TYPES, BREAKING_GITMOJI } from './constants.mjs';
 
 // ---------------------------------------------------------------------------
@@ -80,21 +81,25 @@ export function computeBump(commits) {
   return { level, reasons: level === 'none' ? [] : classified.filter((c) => c.level === level) };
 }
 
-/** Splits "v1.2.3" / "1.2.3" into { prefix, version }, or null when it isn't semver-like. */
+/**
+ * Splits a tag such as "v1.2.3", "1.2.3" or "1.0.0-beta.1" into { prefix, version } using
+ * semver's parser, or null when it isn't a valid semantic version.
+ */
 export function parseVersionTag(tag) {
-  const m = String(tag ?? '').match(/^(v?)(\d+\.\d+\.\d+)/);
-  return m ? { prefix: m[1], version: m[2] } : null;
+  const s = String(tag ?? '').trim();
+  const v = semver.parse(s);
+  return v ? { prefix: s.startsWith('v') ? 'v' : '', version: v.version } : null;
 }
 
-/** Applies a bump level to "X.Y.Z" (a prerelease/build suffix is dropped). Null for an invalid version. */
+/**
+ * Applies a bump level (major | minor | patch) with semver.inc; any other level
+ * returns the version unchanged. Null for an invalid version. A prerelease
+ * graduates the way semver defines it (1.2.3-beta.1 + patch → 1.2.3).
+ */
 export function bumpVersion(version, level) {
-  const m = String(version ?? '').match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!m) return null;
-  const [major, minor, patch] = m.slice(1).map(Number);
-  if (level === 'major') return `${major + 1}.0.0`;
-  if (level === 'minor') return `${major}.${minor + 1}.0`;
-  if (level === 'patch') return `${major}.${minor}.${patch + 1}`;
-  return `${major}.${minor}.${patch}`;
+  const v = semver.valid(version);
+  if (!v) return null;
+  return ['major', 'minor', 'patch'].includes(level) ? semver.inc(v, level) : v;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,20 +154,14 @@ export function formatChangelogSection({ version, date, commits, all = false }) 
   return lines.join('\n');
 }
 
-/** Compares two "X.Y.Z" versions numerically: negative when a < b. Non-semver input compares as equal. */
+/** semver.compare: negative when a < b. Anything that is not a valid version compares as equal. */
 export function compareVersions(a, b) {
-  const pa = String(a).match(/^(\d+)\.(\d+)\.(\d+)/);
-  const pb = String(b).match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!pa || !pb) return 0;
-  for (let i = 1; i <= 3; i++) {
-    if (Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) - Number(pb[i]);
-  }
-  return 0;
+  return semver.valid(a) && semver.valid(b) ? semver.compare(a, b) : 0;
 }
 
 /**
- * Newest-first release list from { tag, date }[] — semver tags only, sorted by
- * version, one entry per version (so "1.2.0" and "v1.2.0" don't both appear).
+ * Newest-first release list from { tag, date }[] — valid semver tags only, sorted by
+ * version (prereleases below their release), one entry per version (so "1.2.0" and "v1.2.0" don't both appear).
  */
 export function sortVersionTags(tags) {
   const seen = new Set();

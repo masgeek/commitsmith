@@ -152,11 +152,26 @@ test('bumpVersion / parseVersionTag', () => {
   assert.equal(bumpVersion('1.2.3', 'minor'), '1.3.0');
   assert.equal(bumpVersion('1.2.3', 'patch'), '1.2.4');
   assert.equal(bumpVersion('1.2.3', 'none'), '1.2.3');
-  assert.equal(bumpVersion('1.2.3-beta.1', 'patch'), '1.2.4');
   assert.equal(bumpVersion('nope', 'patch'), null);
+  assert.equal(bumpVersion('v1.2.3', 'minor'), '1.3.0'); // a leading v is accepted
   assert.deepEqual(parseVersionTag('v1.4.0'), { prefix: 'v', version: '1.4.0' });
   assert.deepEqual(parseVersionTag('1.4.0'), { prefix: '', version: '1.4.0' });
   assert.equal(parseVersionTag('release-1'), null);
+  assert.equal(parseVersionTag('1.2'), null); // not a full semantic version
+  assert.equal(parseVersionTag('1.2.3.4'), null);
+});
+
+test('prereleases follow semver: they graduate on bump, and sort below their release', () => {
+  assert.equal(bumpVersion('1.2.3-beta.1', 'patch'), '1.2.3'); // semver.inc graduates the prerelease
+  assert.equal(bumpVersion('2.0.0-rc.1', 'major'), '2.0.0');
+  assert.equal(bumpVersion('1.2.3-beta.1', 'minor'), '1.3.0');
+  assert.deepEqual(parseVersionTag('v1.0.0-beta.2'), { prefix: 'v', version: '1.0.0-beta.2' });
+  assert.ok(compareVersions('1.0.0-beta.1', '1.0.0') < 0);
+  assert.ok(compareVersions('1.0.0-beta.2', '1.0.0-beta.10') < 0); // numeric prerelease ids, not string order
+  assert.deepEqual(
+    sortVersionTags(['1.0.0', '1.0.0-rc.1', '1.0.0-beta.2', '0.9.0'].map((tag) => ({ tag, date: 'd' }))).map((t) => t.tag),
+    ['1.0.0', '1.0.0-rc.1', '1.0.0-beta.2', '0.9.0']
+  );
 });
 
 test('setPackageVersion changes only the top-level version and keeps formatting', () => {

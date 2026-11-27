@@ -27,6 +27,9 @@ export const TOPICS = {
       ['--no-breaking-detection', 'Skip the breaking-change classification and the BREAKING CHANGE footer.'],
       ['--no-gitmoji', 'Drop the leading emoji from the message for this run.'],
       ['--no-secret-guard', 'Send diffs without redacting likely secrets (see: help scan).'],
+      ['--no-style', 'Do not show the model this repository’s recent commits as style examples.'],
+      ['--no-scope-hint', 'Do not infer the scope from the changed paths.'],
+      ['--no-warnings', 'Skip the heads-up about oversized or mixed staged changes.'],
     ],
     examples: [
       ['commitsmith', 'preview a message for everything staged'],
@@ -38,8 +41,10 @@ export const TOPICS = {
       'Breaking changes get a 💥 header and a final "BREAKING CHANGE: …" footer, checked by a second focused pass.',
       'A ticket in the branch name (feature/ABC-123-…) adds "Refs: ABC-123".',
       'Project rules (scopes, types, length, gitmoji) apply — see: help config.',
+      'The model also sees your last few commit subjects (to match your style), and the scope is inferred from the changed paths (workspace package, folder under src/, or file name) when the files agree.',
+      'A single commit of a very large or scattered change prints a warning suggesting --group or --split.',
     ],
-    see: ['amend', 'config'],
+    see: ['amend', 'fixup', 'reword', 'config'],
   },
 
   amend: {
@@ -56,6 +61,46 @@ export const TOPICS = {
     examples: [['commitsmith --amend', 'review a new message for HEAD']],
     notes: ['If HEAD is already pushed you are warned, and non-interactive runs need -y plus --force.'],
     see: ['commit'],
+  },
+
+  fixup: {
+    group: 'Write commits',
+    label: '--fixup',
+    summary: 'attach staged changes to the earlier commit they belong to',
+    usage: ['commitsmith --fixup [--autosquash] [-y]'],
+    description:
+      'Finds which earlier commit your staged changes belong to — git blame on the lines you changed, ranked by how many lines each commit owns — and records them as a "fixup!" commit for it. Only commits that are not pushed yet are candidates. No model is called.',
+    options: [
+      ['--autosquash', 'Also fold the fixup into its target right away with a non-interactive rebase (your unstaged changes are stashed and restored).'],
+      ['-y', 'Take the top candidate without asking.'],
+    ],
+    examples: [
+      ['commitsmith --fixup', 'pick the commit from a short list'],
+      ['commitsmith --fixup --autosquash -y', 'fold it into the best match immediately'],
+    ],
+    notes: ['Brand-new files and code with no history cannot be attributed; make a normal commit for those.', 'Without a terminal and without -y it only prints the suggestion.'],
+    see: ['reword', 'amend'],
+  },
+
+  reword: {
+    group: 'Write commits',
+    label: '--reword',
+    summary: 'rewrite bad commit messages across a branch',
+    usage: ['commitsmith --reword [--from <ref>] [--all] [-y] [--force]'],
+    description:
+      'Regenerates the messages of the commits on this branch that break your commit rules, each from its own diff, before you merge. The range is <default branch>..HEAD unless you pass --from. File contents never change: commits are re-created on the same trees with the same authors and dates, trailers such as Co-authored-by and Refs are kept, and the old tip is saved as a backup ref. A preview unless you confirm or pass -y.',
+    options: [
+      ['--from <ref>', 'Start the range after this ref instead of the default branch.'],
+      ['--all', 'Reword every commit in the range, not just the ones that fail the rules.'],
+      ['-y', 'Rewrite without the confirmation prompt.'],
+      ['--force', 'Allow rewriting commits that are already on a remote branch (you then need git push --force-with-lease).'],
+    ],
+    examples: [
+      ['commitsmith --reword', 'preview what would change on this branch'],
+      ['commitsmith --reword -y', 'rewrite the failing messages'],
+    ],
+    notes: ['Needs a straight line of commits: merge commits in the range stop it. Commit signatures are not preserved.', 'The result prints the exact command that restores the old branch.'],
+    see: ['lint-commits', 'amend', 'config'],
   },
 
   review: {
@@ -145,6 +190,22 @@ export const TOPICS = {
     see: ['hook', 'config'],
   },
 
+  'lint-commits': {
+    group: 'Review and safety',
+    label: '--lint-commits',
+    summary: 'check every commit message in a range (offline, for CI)',
+    usage: ['commitsmith --lint-commits [--from <ref>] [--branch <ref>]'],
+    description:
+      'Checks each non-merge commit message in <ref>..<branch> against the commit rules (type, scope, subject length) — the CI counterpart of the commit-msg hook. The range defaults to the default branch..HEAD. Offline: no model, no config lookup beyond the rules.',
+    options: [
+      ['--from <ref>', 'Start of the range (in a pull request: the base commit).'],
+      ['--branch <ref>', 'End of the range (default HEAD).'],
+    ],
+    examples: [['commitsmith --lint-commits --from origin/main', 'what a PR check runs']],
+    notes: ['Exit 1 when any message fails. The repository ships a ready-made GitHub Action (action.yml) that runs this on pull requests — see the README.', 'Fix failures with: commitsmith --reword.'],
+    see: ['reword', 'hook', 'check'],
+  },
+
   hook: {
     group: 'Review and safety',
     label: 'hook',
@@ -192,25 +253,72 @@ export const TOPICS = {
     group: 'Versioning and releases',
     label: '--changelog',
     summary: 'full changelog: unreleased changes plus every tag (offline)',
-    usage: ['commitsmith --changelog [--from <ref>] [--branch <ref>] [--release-version <v>] [--unreleased] [--all] [--output <file>] [--rebuild]'],
+    usage: ['commitsmith --changelog [--from <ref>] [--branch <ref>] [--release-version <v>] [--unreleased] [--all] [--output <file> | --stdout] [--rebuild]'],
     description:
-      'Builds a changelog from git history: the unreleased changes first (commits since the newest tag), then every semver tag from newest to oldest with its date and the commits since the previous tag. Within each section breaking changes come first (with their footers), then commits grouped by type; ci, test, style and chore are hidden unless --all.',
+      'Writes CHANGELOG.md (in the current directory) from git history: the unreleased changes first (commits since the newest tag), then every semver tag from newest to oldest with its date and the commits since the previous tag. Within each section breaking changes come first (with their footers), then commits grouped by type; ci, test, style and chore are hidden unless --all.',
     options: [
+      ['--stdout', 'Print the changelog instead of writing a file.'],
+      ['--output <file>', 'Write this file instead of CHANGELOG.md. Created if missing; otherwise [Unreleased] is refreshed and missing releases are inserted in order, while releases already in the file are left exactly as written.'],
       ['--unreleased', 'Only the unreleased section.'],
       ['--release-version <v>', 'Label the unreleased changes as this version (with today’s date) instead of [Unreleased] — use it when cutting a release.'],
       ['--from <ref>', 'Only history after this ref (tags up to it are left out).'],
       ['--branch <ref>', 'History up to this ref instead of HEAD.'],
       ['--all', 'Include ci, test, style and chore commits.'],
-      ['--output <file>', 'Write the changelog to this file. Created if missing; otherwise [Unreleased] is refreshed and missing releases are inserted in order, while releases already in the file are left exactly as written.'],
-      ['--rebuild', 'With --output: regenerate the whole file, replacing hand edits.'],
+      ['--rebuild', 'Regenerate the whole file, replacing hand edits.'],
     ],
     examples: [
-      ['commitsmith --changelog', 'print the whole changelog'],
-      ['commitsmith --changelog --output CHANGELOG.md', 'create or refresh CHANGELOG.md'],
-      ['commitsmith --changelog --release-version 1.1.0 --output CHANGELOG.md', 'cut 1.1.0: replaces [Unreleased]'],
+      ['commitsmith --changelog', 'create or refresh CHANGELOG.md'],
+      ['commitsmith --changelog --release-version 1.1.0', 'cut 1.1.0: replaces [Unreleased]'],
+      ['commitsmith --changelog --stdout', 'just print it'],
     ],
     notes: ['Offline: no model is called. Only semver tags (1.2.3 or v1.2.3) reachable from the target are listed.'],
     see: ['bump', 'release-notes'],
+  },
+
+  release: {
+    group: 'Versioning and releases',
+    label: '--release',
+    summary: 'bump, changelog, commit, tag, push, GitHub Release in one go',
+    usage: ['commitsmith --release [--release-version <v>] [--no-changelog] [--push] [--github [--draft] [--as-bot]] [-y]'],
+    description:
+      'Does the whole release: picks the next version from the commits since the last tag, writes it into package.json, adds a section to CHANGELOG.md, commits "chore(release): <tag>", and creates an annotated tag. With --push it pushes the branch and the tag; with --github it also creates the GitHub Release, using this version’s changelog section as the body. A preview until you confirm or pass -y; it refuses to start with uncommitted changes and never force-pushes.',
+    options: [
+      ['--release-version <v>', 'Release this version instead of the suggested one (must be newer than the current).'],
+      ['--no-changelog', 'Skip CHANGELOG.md.'],
+      ['--push', 'Push the branch and the tag to origin.'],
+      ['--github', 'Create the GitHub Release for the pushed tag (needs --push and the gh CLI).'],
+      ['--draft', 'With --github, create the release as a draft. Versions with a prerelease part are marked as pre-releases automatically.'],
+      ['--as-bot', 'With --github, create the release as your GitHub App bot (see: help init github).'],
+      ['-y', 'Perform every step without asking.'],
+      ['--output <file>', 'Changelog file to update instead of CHANGELOG.md.'],
+    ],
+    examples: [
+      ['commitsmith --release', 'preview the plan'],
+      ['commitsmith --release -y --push --github', 'cut and publish a release'],
+    ],
+    notes: ['If your repository already tags releases in CI (for example on every merge to main), use --bump or --changelog instead so the two do not collide.', 'Offline unless --push or --github is used; no model is called.'],
+    see: ['bump', 'changelog', 'release-notes'],
+  },
+
+  standup: {
+    group: 'Versioning and releases',
+    label: '--standup',
+    summary: 'a short Done / In progress update from your recent commits',
+    usage: ['commitsmith --standup [--since <when>] [--author <who|all>] [--all-branches] [--copy]'],
+    description:
+      'Summarizes what you did recently in plain language: your commits since the last working day (Monday looks back to Friday) plus the files you have uncommitted. The update goes to stdout, the header to stderr.',
+    options: [
+      ['--since <when>', 'How far back: anything git understands — "yesterday", "3 days ago", "2026-01-15".'],
+      ['--author <who>', 'Report on someone else (a substring of name or email), or "all" for the whole team. Default: you (git user.email).'],
+      ['--all-branches', 'Include commits on every local branch, not only the current one.'],
+      ['--copy', 'Copy the update to the clipboard.'],
+    ],
+    examples: [
+      ['commitsmith --standup', 'since the last working day'],
+      ['commitsmith --standup --since "1 week ago" --all-branches --copy', 'a weekly summary, copied'],
+    ],
+    notes: [],
+    see: ['release-notes'],
   },
 
   'release-notes': {
@@ -325,6 +433,8 @@ export const TOPICS = {
       ['COMMITSMITH_FALLBACK_MODELS', 'comma-separated models to retry with'],
       ['COMMITSMITH_SECRET_GUARD', 'redact (default) | block | off'],
       ['COMMITSMITH_TICKET_FOOTER', 'footer word for ticket links (Refs)'],
+      ['COMMITSMITH_STYLE_EXAMPLES', 'recent commit subjects shown to the model as style examples (8; 0 = off)'],
+      ['config: inferScope, diffWarnings', 'false turns off scope inference from paths / the oversized-change warnings'],
       ['COMMITSMITH_RELEASE_NOTES_CONTEXT', 'one-line product description for release notes'],
       ['COMMITSMITH_PR_AS_BOT, _GH_TOKEN', 'open PRs as a bot; a bot account token'],
       ['COMMITSMITH_GH_APP_ID / _KEY_PATH / _INSTALLATION_ID', 'GitHub App credentials (id, .pem path, optional installation)'],
@@ -357,6 +467,14 @@ const FLAG_TOPICS = {
   '-y': 'commit',
   '--dry-run': 'commit',
   '--amend': 'amend',
+  '--fixup': 'fixup',
+  '--autosquash': 'fixup',
+  '--reword': 'reword',
+  '--lint-commits': 'lint-commits',
+  '--release': 'release',
+  '--push': 'release',
+  '--github': 'release',
+  '--standup': 'standup',
   '--review': 'review',
   '--breaking': 'breaking',
   '--check': 'check',
@@ -376,7 +494,7 @@ const ALIASES = {
   commit: 'commit',
   hooks: 'hook',
   lint: 'lint-message',
-  release: 'release-notes',
+  'stand-up': 'standup',
   releasenotes: 'release-notes',
   notes: 'release-notes',
   'pull-request': 'pr',
