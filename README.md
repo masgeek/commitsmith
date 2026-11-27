@@ -618,6 +618,9 @@ header to stderr.
 
 ### CI: `--lint-commits` and the GitHub Action
 
+> **Full guide:** [docs/ci.md](docs/ci.md) — every CI command with its exit codes, PR-check
+> and release workflows (tag action, release action, plain commands), and model settings in CI.
+
 `commitsmith --lint-commits [--from <ref>]` checks every non-merge commit message in
 `<ref>..HEAD` (default: default branch..HEAD) against your commit rules — offline, no model —
 and exits `1` on failures. The repository ships a composite action wrapping it:
@@ -1071,6 +1074,8 @@ stage-only Trusted Publisher is deliberate.
 Work on `develop` goes to `main` through `.github/workflows/next-release.yml`:
 after CI succeeds on `develop`, it opens a PR titled `Release: <first line of
 the commit message>` targeting `main`.
+
+The CI commands, exit codes and ready-made workflows are documented in [docs/ci.md](docs/ci.md).
 
 A manual alternative is `pnpm version patch` (or `minor`/`major`) followed by
 `git push --follow-tags`, but the automated path above is the normal one.
