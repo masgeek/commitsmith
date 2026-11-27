@@ -680,7 +680,7 @@ Outputs: `released`, `tag`, `level` (`major`/`minor`/`patch`/`none`), `breaking`
 — so later steps can react, e.g. `if: steps.release.outputs.released == 'true'`. The action
 fetches full history and tags itself. Nothing is released when only docs, tests, CI,
 style or chore commits landed. Tags keep the prefix of the previous tag (`v` or none).
-This repository releases itself with it (`.github/workflows/bump-version.yml`).
+(This repository itself releases through the tag action — see [Release process](#release-process).)
 
 ### Git hooks
 
@@ -1051,13 +1051,15 @@ Versions are unprefixed (`1.0.0`, not `v1.0.0`) — `tag_prefix: ""` in
 a `node commitsmith.mjs --help` smoke test, `package.json` validation,
 `pnpm audit --production`, and `pnpm pack`.
 
-When CI succeeds on `main`, `.github/workflows/bump-version.yml` releases the
-project with its own tool: `commitsmith --bump --json` decides the version from the
-commits since the last tag (a breaking change — 💥, `type!:` or a `BREAKING CHANGE:`
-footer — means major, `feat` minor, `fix` and other code changes patch; only
-docs/test/ci/style/chore means no release), `--changelog` writes the release notes,
-and the workflow pushes the tag and creates the GitHub Release. Nothing is
-released when no commit calls for a version. When the release is published,
+When CI succeeds on `main`, `.github/workflows/bump-version.yml` tags and releases with
+[`masgeek/github-tag-action`](https://github.com/masgeek/github-tag-action) (`@release`),
+the maintainer's fork of the tag action. It reads the commit messages itself — no AI:
+gitmoji-prefixed conventional commits are understood, a breaking change (💥, `type!:` or a
+`BREAKING CHANGE:` footer) means major, `feat` minor, `fix` and other code changes patch,
+and `default_bump: false` skips the release when only docs/test/ci/style/chore landed. It
+pushes an annotated, unprefixed tag and creates the GitHub Release with the changelog as
+its body. (`commitsmith --bump` and the reusable `release/` action apply the same rules
+locally or in other projects.) When the release is published,
 `.github/workflows/publish-npm.yml` pins `package.json` to that tag in the CI
 checkout (so the committed version doesn't have to match), runs `pnpm test`
 plus the `--help` smoke test, then stages the publish with

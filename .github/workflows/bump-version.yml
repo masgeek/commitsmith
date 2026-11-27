@@ -1,10 +1,10 @@
 name: BumpVersion
 
-# After CI succeeds on main, commitsmith releases itself with its own reusable
-# release action (./release): the version comes from the conventional commits
-# since the last tag (breaking → major, feat → minor, fix → patch, docs/test/ci/
-# chore alone → no release), the notes from --changelog. It runs the code that
-# CI just tested, offline — no model.
+# After CI succeeds on main, tag and release with the user's fork of the tag
+# action. It reads the commit messages itself — gitmoji-prefixed conventional
+# commits, 💥 / `type!:` / `BREAKING CHANGE:` for major, feat → minor, fix and
+# other code changes → patch — and skips the release when only docs, tests, CI,
+# style or chore commits landed (default_bump: false). No AI involved.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
+  bump-tag-version:
     runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
@@ -23,6 +23,8 @@ jobs:
     concurrency:
       cancel-in-progress: false
       group: bump-version-${{ github.ref }}
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
     steps:
       # A GitHub App token (not GITHUB_TOKEN) so the published release triggers publish-npm.yml.
       - name: Generate GitHub App token
@@ -32,22 +34,28 @@ jobs:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v7
+      - name: Tag and release
+        id: tag_version
+        uses: masgeek/github-tag-action@release
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          commit_sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+          tag_prefix: ""
+          create_annotated_tag: true
+          default_bump: "false"        # nothing releasable (docs/ci/chore only) → no tag
+          gitmoji: true                # understand ✨ feat(x): … and 💥 breaking commits
+          extended_release_rules: true # also: accessibility/removal → minor; security/refactor/build → patch
+          fetch_all_tags: true
+          create_release: true         # GitHub Release with the changelog as its body
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - uses: pnpm/action-setup@v4
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prod
-
-      - name: Release
-        uses: ./release
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          cli: node commitsmith.mjs
-          setup-node: 'false'
+      - name: Release summary
+        if: steps.tag_version.outputs.released == 'true'
+        env:
+          TAG: ${{ steps.tag_version.outputs.new_tag }}
+          BREAKING: ${{ steps.tag_version.outputs.breaking }}
+        run: |
+          {
+            echo "## Release $TAG"
+            [ "$BREAKING" = "true" ] && echo "Contains breaking changes."
+            echo "Tag and release created by masgeek/github-tag-action."
+          } >> "$GITHUB_STEP_SUMMARY"
