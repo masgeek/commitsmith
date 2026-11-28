@@ -43,6 +43,7 @@ jobs:
           tag_prefix: ""
           create_annotated_tag: true
           default_bump: "false"        # nothing releasable (docs/ci/chore only) → no tag
+          default_prerelease_bump: "false" # nothing releasable (docs/ci/chore only) → no tag
           gitmoji: true                # understand ✨ feat(x): … and 💥 breaking commits
           extended_release_rules: true # also: accessibility/removal → minor; security/refactor/build → patch
           fetch_all_tags: true
